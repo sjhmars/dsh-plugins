@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 //#region lib/types/index.js
 /**
@@ -296,39 +296,93 @@ const CANDIDATES = [
 		paths: { linux: ["/usr/bin/geany"] }
 	}
 ];
-/** Detection result TTL: re-probing PATH + install paths on every menu open is
-* the "每次点击都很卡" complaint; editors change rarely, so cache briefly. */
-const DETECT_TTL_MS = 3e4;
+/** Detection result TTL: editors change rarely, so cache generously. */
+const DETECT_TTL_MS = 3e5;
 let detectCache;
+/**
+* Windows: one `reg query ... /s` dump of the whole `App Paths` subtree,
+* parsed into `exeName -> install path`. A single subprocess replaces dozens
+* of per-key queries — spawning `reg.exe` cold on Windows is ~1s each, which
+* was the real source of the page-switch lag.
+*/
+let appPathsCache;
+async function loadAppPaths() {
+	if (appPathsCache !== void 0) return appPathsCache;
+	const map = /* @__PURE__ */ new Map();
+	if (process.platform === "win32") {
+		const stdout = await runCommand("reg.exe", [
+			"query",
+			"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths",
+			"/s"
+		]);
+		let currentExe;
+		for (const line of stdout.split(/\r?\n/)) {
+			const keyMatch = /App Paths\\([^\r\n]+)\s*$/.exec(line);
+			if (keyMatch !== null) {
+				currentExe = keyMatch[1]?.trim().toLowerCase();
+				continue;
+			}
+			const valueMatch = /REG_SZ\s+(\S.*)$/.exec(line);
+			if (currentExe !== void 0 && valueMatch !== null) {
+				const path = valueMatch[1]?.trim();
+				if (path !== void 0 && path !== "" && existsSync(path)) map.set(currentExe, path);
+				currentExe = void 0;
+			}
+		}
+	}
+	appPathsCache = map;
+	return map;
+}
+/** Run one command, collecting stdout; never blocks the event loop. */
+function runCommand(command, args) {
+	return new Promise((resolve) => {
+		const child = spawn(command, [...args], {
+			windowsHide: true,
+			stdio: [
+				"ignore",
+				"pipe",
+				"ignore"
+			]
+		});
+		let stdout = "";
+		child.stdout.on("data", (chunk) => {
+			stdout += String(chunk);
+		});
+		child.on("error", () => {
+			resolve("");
+		});
+		child.on("close", () => {
+			resolve(stdout);
+		});
+	});
+}
 /** Resolve one CLI name to its first PATH hit, or undefined when absent. */
 function resolveCommand(command) {
-	const result = spawnSync(process.platform === "win32" ? "where.exe" : "which", [command], {
-		encoding: "utf8",
-		windowsHide: true
-	});
-	if (result.error !== void 0 || result.status !== 0) return void 0;
-	return result.stdout.split(/\r?\n/).find((line) => line.trim() !== "")?.trim() || void 0;
+	const onWindows = process.platform === "win32";
+	const candidates = onWindows ? [
+		command,
+		`${command}.exe`,
+		`${command}.cmd`,
+		`${command}.bat`
+	] : [command];
+	const dirs = (process.env.PATH ?? "").split(onWindows ? ";" : ":");
+	const sep = onWindows ? "\\" : "/";
+	for (const dir of dirs) {
+		if (dir === "") continue;
+		const base = dir.replace(/[/\\]+$/, "");
+		for (const name of candidates) {
+			const candidate = `${base}${sep}${name}`;
+			if (existsSync(candidate)) return candidate;
+		}
+	}
 }
 /**
-* Windows: read one `App Paths` registry key and return the executable's real
-* install path. The `(Default)` value holds the absolute path regardless of
-* drive, which is how non-C-drive installs resolve. `reg query` is the
-* shell-free builtin; output is `(Default) REG_SZ <path>`.
+* Windows: resolve one `App Paths` registry entry from the bulk-loaded map.
 * @param exeName - registry key name, e.g. `idea64.exe`.
 * @returns the path, or undefined when the key or value is absent.
 */
-function resolveAppPath(exeName) {
-	const result = spawnSync("reg.exe", [
-		"query",
-		`HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exeName}`,
-		"/ve"
-	], {
-		encoding: "utf8",
-		windowsHide: true
-	});
-	if (result.error !== void 0 || result.status !== 0) return void 0;
-	const path = /REG_SZ\s+(\S.*)$/m.exec(result.stdout)?.[1]?.trim();
-	return path !== void 0 && path !== "" && existsSync(path) ? path : void 0;
+async function resolveAppPath(exeName) {
+	return (await loadAppPaths()).get(exeName.toLowerCase());
 }
 /**
 * Windows: locate Visual Studio's `devenv.exe` via Microsoft's `vswhere`
@@ -336,10 +390,10 @@ function resolveAppPath(exeName) {
 * paths cannot find them; vswhere reports the authoritative install location.
 * @returns the devenv.exe path, or undefined when no instance is found.
 */
-function resolveVswhere() {
+async function resolveVswhere() {
 	const vswhere = process.env["PROGRAMFILES(X86)"] + "\\Microsoft Visual Studio\\Installer\\vswhere.exe";
 	if (!existsSync(vswhere)) return void 0;
-	const result = spawnSync(vswhere, [
+	const path = (await runCommand(vswhere, [
 		"-latest",
 		"-products",
 		"*",
@@ -347,19 +401,14 @@ function resolveVswhere() {
 		"Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
 		"-property",
 		"productPath"
-	], {
-		encoding: "utf8",
-		windowsHide: true
-	});
-	if (result.error !== void 0 || result.status !== 0) return void 0;
-	const path = result.stdout.trim();
+	])).trim();
 	return path !== "" && existsSync(path) ? path : void 0;
 }
 /** Probe one candidate on the current platform. */
-function resolveCandidate(candidate) {
+async function resolveCandidate(candidate) {
 	if (process.platform === "win32") {
 		for (const exeName of candidate.appPaths ?? []) {
-			const path = resolveAppPath(exeName);
+			const path = await resolveAppPath(exeName);
 			if (path !== void 0) return {
 				id: candidate.id,
 				name: candidate.name,
@@ -367,7 +416,7 @@ function resolveCandidate(candidate) {
 			};
 		}
 		if (candidate.vswhere === true) {
-			const path = resolveVswhere();
+			const path = await resolveVswhere();
 			if (path !== void 0) return {
 				id: candidate.id,
 				name: candidate.name,
@@ -389,7 +438,7 @@ function resolveCandidate(candidate) {
 		command: path
 	};
 	for (const command of candidate.commands) {
-		const resolved = resolveCommand(command);
+		const resolved = await resolveCommand(command);
 		if (resolved !== void 0) return {
 			id: candidate.id,
 			name: candidate.name,
@@ -397,19 +446,36 @@ function resolveCandidate(candidate) {
 		};
 	}
 }
-/** Detect every editor on this machine, caching the result for the TTL. */
-function detectEditors() {
+/**
+* Detect every editor on this machine, caching the result for the TTL. Probes
+* run async (`spawn`, never `spawnSync`) under a small concurrency window:
+* spawning dozens of `where`/`reg.exe` processes at once is itself slow on
+* Windows, and page-switch lag came from exactly that burst. A cold detection
+* therefore settles in about a second while the event loop stays responsive.
+*/
+async function detectEditors() {
 	const now = Date.now();
 	if (detectCache !== void 0 && now - detectCache.at < DETECT_TTL_MS) return detectCache.editors;
-	const editors = CANDIDATES.flatMap((candidate) => {
-		const resolved = resolveCandidate(candidate);
-		return resolved === void 0 ? [] : [resolved];
-	});
+	const editors = (await mapWithConcurrency(CANDIDATES, 4, resolveCandidate)).flatMap((resolved) => resolved === void 0 ? [] : [resolved]);
 	detectCache = {
 		at: now,
 		editors
 	};
 	return editors;
+}
+/** Map async work over a list with a fixed concurrency window (no process burst). */
+async function mapWithConcurrency(items, concurrency, worker) {
+	const results = new Array(items.length);
+	let next = 0;
+	const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+		while (next < items.length) {
+			const index = next;
+			next += 1;
+			results[index] = await worker(items[index]);
+		}
+	});
+	await Promise.all(runners);
+	return results;
 }
 /** The Remote service: browser-facing endpoints for detection and launching. */
 let EditorLauncherService = (() => {
@@ -478,7 +544,7 @@ let EditorLauncherService = (() => {
 				ok: false,
 				error: `unknown editor "${editorId}"`
 			};
-			const editor = resolveCandidate(candidate);
+			const editor = await resolveCandidate(candidate);
 			if (editor === void 0) return {
 				ok: false,
 				error: `editor "${candidate.name}" is no longer available`

@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build / pack artifacts (lib/ IS committed — it is the shipped runtime)
+*.tgz
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# pnpm / npm noise
+.pnpm-store/
+npm-debug.log*
+
+# Stray zero-byte file created by accident during earlier tooling
+plugins/editor-launcher/pnpm

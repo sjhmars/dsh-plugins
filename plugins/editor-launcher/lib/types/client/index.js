@@ -36,23 +36,39 @@ function resolveWorkspacePath(cwd, path) {
  */
 export function apply(ctx) {
     const connection = ctx.get('connection');
+    // Cross-session shared detection cache: one RPC for all pickers, refreshed
+    // only by the explicit menu refresh action. Without this, every page switch
+    // remounts the session-scoped picker and re-issues the RPC.
+    let editorsCache = null;
+    const fetchEditors = async () => {
+        const result = await connection.rpc.call('/api', 'editorLauncher/listEditors', { args: {} });
+        return unwrap(result);
+    };
+    const listEditors = async () => {
+        if (editorsCache !== null)
+            return editorsCache;
+        editorsCache = await fetchEditors();
+        return editorsCache;
+    };
+    const refreshEditors = async () => {
+        editorsCache = await fetchEditors();
+        return editorsCache;
+    };
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'editor-launcher: browser dictionaries');
     ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
         name: 'conversation.session.header.utilities',
         id: 'editor-launcher',
         order: -1,
         locale: NS,
-        inject: () => ({
-            listEditors: async () => {
-                const result = await connection.rpc.call('/api', 'editorLauncher/listEditors', { args: {} });
-                return unwrap(result);
-            },
-        }),
+        inject: () => ({ listEditors, refreshEditors }),
     }, EditorPicker));
-    // Document-capture click interceptor: session file links (ToolRow's
-    // `data-tool` rows) open with the preferred editor when one is set. The
-    // capture phase runs before React's own handlers, so preventing default and
-    // stopping propagation here replaces the chat view's default-app open.
+    // Document-capture click interceptor: two kinds of session file buttons
+    // open with the preferred editor when one is set —
+    //   1. ToolRow's `[data-tool]` path links (Read/Edit/Write summaries);
+    //   2. prose file mentions (ui-deliverables `fileMention` buttons) whose
+    //      `title` carries the full produced path.
+    // The capture phase runs before React's own handlers, so preventing default
+    // and stopping propagation here replaces the chat view's default-app open.
     ctx.effect(() => {
         const onDocumentClick = (event) => {
             const preferred = readPreferred();
@@ -64,9 +80,19 @@ export function apply(ctx) {
             const button = target.closest('button');
             if (button === null)
                 return;
-            // The row's expand toggle carries aria-expanded; the path link does not.
+            // The row's expand toggle carries aria-expanded; neither file button does.
             if (button.hasAttribute('aria-expanded'))
                 return;
+            // Prose file mention: `title` is the full path (MarkdownText's
+            // fileMention button), so it is the open target directly.
+            const titlePath = button.getAttribute('title');
+            if (titlePath !== null && isAbsolutePath(titlePath)) {
+                event.preventDefault();
+                event.stopPropagation();
+                void openWithPreferred(connection, ctx, preferred.id, titlePath);
+                return;
+            }
+            // ToolRow path link: inside a `[data-tool]` row, text is the path label.
             const row = button.closest('[data-tool]');
             if (row === null)
                 return;
@@ -80,6 +106,10 @@ export function apply(ctx) {
         document.addEventListener('click', onDocumentClick, true);
         return () => document.removeEventListener('click', onDocumentClick, true);
     }, 'editor-launcher: file-link click interceptor');
+}
+/** Whether a string is an absolute filesystem path (drive, UNC, or rooted). */
+function isAbsolutePath(value) {
+    return value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[/\\]/.test(value);
 }
 /** Unwrap a Remote RPC result or throw its carrier error. */
 function unwrap(result) {

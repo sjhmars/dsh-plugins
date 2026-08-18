@@ -55,17 +55,20 @@ window.__ModuleLoader__.load({
 		* Render the Session-header editor picker capsule. Choosing an editor records
 		* it as the preferred default (id + name, so the capsule label survives a
 		* session switch); the click interceptor in the browser apply uses that id
-		* when opening session file links. Editors are detected once on first mount —
-		* re-opening the menu never re-probes the host — with a manual icon-only
-		* refresh row for when editors are installed while the app is open.
+		* when opening session file links. Editors load lazily on first menu open and
+		* are cached across sessions in the browser apply, so page switches never
+		* re-issue detection RPCs; the icon-only refresh row forces a fresh probe.
 		* @param props - slot runtime, localized copy, and the injected detection face.
 		* @returns the picker capsule with its menu.
 		*/
-		function EditorPicker({ listEditors, t }) {
+		function EditorPicker({ listEditors, refreshEditors, t }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const [editors, setEditors] = (0, react.useState)(null);
 			const [preferred, setPreferred] = (0, react.useState)(readPreferred());
+			const loadedOnce = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
+				if (!open || loadedOnce.current) return;
+				loadedOnce.current = true;
 				let cancelled = false;
 				listEditors().then((found) => {
 					if (!cancelled) setEditors(found);
@@ -75,20 +78,20 @@ window.__ModuleLoader__.load({
 				return () => {
 					cancelled = true;
 				};
-			}, [listEditors]);
+			}, [open, listEditors]);
 			const refreshing = (0, react.useRef)(false);
 			const refresh = (0, react.useCallback)(() => {
 				if (refreshing.current) return;
 				refreshing.current = true;
 				setEditors(null);
-				listEditors().then((found) => {
+				refreshEditors().then((found) => {
 					setEditors(found);
 					refreshing.current = false;
 				}, () => {
 					setEditors([]);
 					refreshing.current = false;
 				});
-			}, [listEditors]);
+			}, [refreshEditors]);
 			const label = preferred !== void 0 ? t("trigger.preferred", { name: preferred.name }) : t("trigger.default");
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 				open,
@@ -214,6 +217,19 @@ window.__ModuleLoader__.load({
 		*/
 		function apply(ctx) {
 			const connection = ctx.get("connection");
+			let editorsCache = null;
+			const fetchEditors = async () => {
+				return unwrap(await connection.rpc.call("/api", "editorLauncher/listEditors", { args: {} }));
+			};
+			const listEditors = async () => {
+				if (editorsCache !== null) return editorsCache;
+				editorsCache = await fetchEditors();
+				return editorsCache;
+			};
+			const refreshEditors = async () => {
+				editorsCache = await fetchEditors();
+				return editorsCache;
+			};
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
@@ -223,9 +239,10 @@ window.__ModuleLoader__.load({
 				id: "editor-launcher",
 				order: -1,
 				locale: NS,
-				inject: () => ({ listEditors: async () => {
-					return unwrap(await connection.rpc.call("/api", "editorLauncher/listEditors", { args: {} }));
-				} })
+				inject: () => ({
+					listEditors,
+					refreshEditors
+				})
 			}, EditorPicker));
 			ctx.effect(() => {
 				const onDocumentClick = (event) => {
@@ -236,6 +253,13 @@ window.__ModuleLoader__.load({
 					const button = target.closest("button");
 					if (button === null) return;
 					if (button.hasAttribute("aria-expanded")) return;
+					const titlePath = button.getAttribute("title");
+					if (titlePath !== null && isAbsolutePath(titlePath)) {
+						event.preventDefault();
+						event.stopPropagation();
+						openWithPreferred(connection, ctx, preferred.id, titlePath);
+						return;
+					}
 					if (button.closest("[data-tool]") === null) return;
 					const text = button.textContent?.trim() ?? "";
 					if (!looksLikeFilePath(text)) return;
@@ -246,6 +270,10 @@ window.__ModuleLoader__.load({
 				document.addEventListener("click", onDocumentClick, true);
 				return () => document.removeEventListener("click", onDocumentClick, true);
 			}, "editor-launcher: file-link click interceptor");
+		}
+		/** Whether a string is an absolute filesystem path (drive, UNC, or rooted). */
+		function isAbsolutePath(value) {
+			return value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:[/\\]/.test(value);
 		}
 		/** Unwrap a Remote RPC result or throw its carrier error. */
 		function unwrap(result) {

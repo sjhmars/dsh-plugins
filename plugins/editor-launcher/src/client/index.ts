@@ -4,7 +4,7 @@ import type { ConnectionHandle, RpcResult } from '@deepseek-ai/dsh-client-connec
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { OpenResult } from '../types.ts'
+import type { OpenResult, EditorInfo } from '../types.ts'
 import { EditorPicker, type EditorLauncherInjected } from './EditorPicker.tsx'
 import { en, NS, zh, type EditorLauncherKey } from './locales.ts'
 import { readPreferred } from './preference.ts'
@@ -50,6 +50,24 @@ function resolveWorkspacePath(cwd: string | undefined, path: string): string {
 export function apply(ctx: ClientContext): void {
   const connection = ctx.get('connection') as ConnectionHandle
 
+  // Cross-session shared detection cache: one RPC for all pickers, refreshed
+  // only by the explicit menu refresh action. Without this, every page switch
+  // remounts the session-scoped picker and re-issues the RPC.
+  let editorsCache: EditorInfo[] | null = null
+  const fetchEditors = async (): Promise<EditorInfo[]> => {
+    const result = await connection.rpc.call('/api', 'editorLauncher/listEditors', { args: {} })
+    return unwrap(result)
+  }
+  const listEditors = async (): Promise<EditorInfo[]> => {
+    if (editorsCache !== null) return editorsCache
+    editorsCache = await fetchEditors()
+    return editorsCache
+  }
+  const refreshEditors = async (): Promise<EditorInfo[]> => {
+    editorsCache = await fetchEditors()
+    return editorsCache
+  }
+
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'editor-launcher: browser dictionaries')
 
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
@@ -57,18 +75,16 @@ export function apply(ctx: ClientContext): void {
     id: 'editor-launcher',
     order: -1,
     locale: NS,
-    inject: (): EditorLauncherInjected => ({
-      listEditors: async () => {
-        const result = await connection.rpc.call('/api', 'editorLauncher/listEditors', { args: {} })
-        return unwrap(result)
-      },
-    }),
+    inject: (): EditorLauncherInjected => ({ listEditors, refreshEditors }),
   }, EditorPicker))
 
-  // Document-capture click interceptor: session file links (ToolRow's
-  // `data-tool` rows) open with the preferred editor when one is set. The
-  // capture phase runs before React's own handlers, so preventing default and
-  // stopping propagation here replaces the chat view's default-app open.
+  // Document-capture click interceptor: two kinds of session file buttons
+  // open with the preferred editor when one is set —
+  //   1. ToolRow's `[data-tool]` path links (Read/Edit/Write summaries);
+  //   2. prose file mentions (ui-deliverables `fileMention` buttons) whose
+  //      `title` carries the full produced path.
+  // The capture phase runs before React's own handlers, so preventing default
+  // and stopping propagation here replaces the chat view's default-app open.
   ctx.effect(() => {
     const onDocumentClick = (event: MouseEvent): void => {
       const preferred = readPreferred()
@@ -77,8 +93,20 @@ export function apply(ctx: ClientContext): void {
       if (!(target instanceof Element)) return
       const button = target.closest('button')
       if (button === null) return
-      // The row's expand toggle carries aria-expanded; the path link does not.
+      // The row's expand toggle carries aria-expanded; neither file button does.
       if (button.hasAttribute('aria-expanded')) return
+
+      // Prose file mention: `title` is the full path (MarkdownText's
+      // fileMention button), so it is the open target directly.
+      const titlePath = button.getAttribute('title')
+      if (titlePath !== null && isAbsolutePath(titlePath)) {
+        event.preventDefault()
+        event.stopPropagation()
+        void openWithPreferred(connection, ctx, preferred.id, titlePath)
+        return
+      }
+
+      // ToolRow path link: inside a `[data-tool]` row, text is the path label.
       const row = button.closest('[data-tool]')
       if (row === null) return
       const text = button.textContent?.trim() ?? ''
@@ -90,6 +118,11 @@ export function apply(ctx: ClientContext): void {
     document.addEventListener('click', onDocumentClick, true)
     return () => document.removeEventListener('click', onDocumentClick, true)
   }, 'editor-launcher: file-link click interceptor')
+}
+
+/** Whether a string is an absolute filesystem path (drive, UNC, or rooted). */
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[/\\]/.test(value)
 }
 
 /** Unwrap a Remote RPC result or throw its carrier error. */

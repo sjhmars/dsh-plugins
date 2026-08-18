@@ -18,6 +18,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sjhmars/dsh-plugins.git",
+    "directory": "plugins/editor-launcher"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5",

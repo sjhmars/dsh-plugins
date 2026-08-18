@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { EditorInfo, OpenResult } from './types.ts'
@@ -307,36 +307,85 @@ const CANDIDATES: readonly EditorCandidate[] = [
   },
 ]
 
-/** Detection result TTL: re-probing PATH + install paths on every menu open is
- * the "每次点击都很卡" complaint; editors change rarely, so cache briefly. */
-const DETECT_TTL_MS = 30_000
+/** Detection result TTL: editors change rarely, so cache generously. */
+const DETECT_TTL_MS = 300_000
 let detectCache: { at: number; editors: EditorInfo[] } | undefined
+
+/**
+ * Windows: one `reg query ... /s` dump of the whole `App Paths` subtree,
+ * parsed into `exeName -> install path`. A single subprocess replaces dozens
+ * of per-key queries — spawning `reg.exe` cold on Windows is ~1s each, which
+ * was the real source of the page-switch lag.
+ */
+let appPathsCache: Map<string, string> | undefined
+async function loadAppPaths(): Promise<Map<string, string>> {
+  if (appPathsCache !== undefined) return appPathsCache
+  const map = new Map<string, string>()
+  if (process.platform === 'win32') {
+    const stdout = await runCommand('reg.exe', [
+      'query', 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths', '/s',
+    ])
+    // Rows: `...\App Paths\idea64.exe` then `(Default) REG_SZ <path>`.
+    let currentExe: string | undefined
+    for (const line of stdout.split(/\r?\n/)) {
+      const keyMatch = /App Paths\\([^\r\n]+)\s*$/.exec(line)
+      if (keyMatch !== null) {
+        currentExe = keyMatch[1]?.trim().toLowerCase()
+        continue
+      }
+      const valueMatch = /REG_SZ\s+(\S.*)$/.exec(line)
+      if (currentExe !== undefined && valueMatch !== null) {
+        const path = valueMatch[1]?.trim()
+        if (path !== undefined && path !== '' && existsSync(path)) map.set(currentExe, path)
+        currentExe = undefined
+      }
+    }
+  }
+  appPathsCache = map
+  return map
+}
+
+/** Run one command, collecting stdout; never blocks the event loop. */
+function runCommand(command: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let stdout = ''
+    child.stdout.on('data', chunk => { stdout += String(chunk) })
+    child.on('error', () => { resolve('') })
+    child.on('close', () => { resolve(stdout) })
+  })
+}
 
 /** Resolve one CLI name to its first PATH hit, or undefined when absent. */
 function resolveCommand(command: string): string | undefined {
-  const probe = process.platform === 'win32' ? 'where.exe' : 'which'
-  const result = spawnSync(probe, [command], { encoding: 'utf8', windowsHide: true })
-  if (result.error !== undefined || result.status !== 0) return undefined
-  const first = result.stdout.split(/\r?\n/).find(line => line.trim() !== '')
-  return first?.trim() || undefined
+  // PATH parse, not `where`: reading the environment is instant, while a
+  // `where` subprocess costs ~1s per command on Windows. Match `where`'s
+  // PATHEXT semantics: try the bare name, then .exe/.cmd/.bat.
+  const onWindows = process.platform === 'win32'
+  const candidates = onWindows
+    ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
+    : [command]
+  const dirs = (process.env.PATH ?? '').split(onWindows ? ';' : ':')
+  const sep = onWindows ? '\\' : '/'
+  for (const dir of dirs) {
+    if (dir === '') continue
+    const base = dir.replace(/[/\\]+$/, '')
+    for (const name of candidates) {
+      const candidate = `${base}${sep}${name}`
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return undefined
 }
 
 /**
- * Windows: read one `App Paths` registry key and return the executable's real
- * install path. The `(Default)` value holds the absolute path regardless of
- * drive, which is how non-C-drive installs resolve. `reg query` is the
- * shell-free builtin; output is `(Default) REG_SZ <path>`.
+ * Windows: resolve one `App Paths` registry entry from the bulk-loaded map.
  * @param exeName - registry key name, e.g. `idea64.exe`.
  * @returns the path, or undefined when the key or value is absent.
  */
-function resolveAppPath(exeName: string): string | undefined {
-  const key = `HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exeName}`
-  const result = spawnSync('reg.exe', ['query', key, '/ve'], { encoding: 'utf8', windowsHide: true })
-  if (result.error !== undefined || result.status !== 0) return undefined
-  // `(Default)    REG_SZ    C:\Program Files\...\idea64.exe`
-  const match = /REG_SZ\s+(\S.*)$/m.exec(result.stdout)
-  const path = match?.[1]?.trim()
-  return path !== undefined && path !== '' && existsSync(path) ? path : undefined
+async function resolveAppPath(exeName: string): Promise<string | undefined> {
+  const map = await loadAppPaths()
+  return map.get(exeName.toLowerCase())
 }
 
 /** The VS Installer locator, present on any machine with VS 2017 or newer. */
@@ -348,32 +397,32 @@ const VSWHERE = 'vswhere.exe'
  * paths cannot find them; vswhere reports the authoritative install location.
  * @returns the devenv.exe path, or undefined when no instance is found.
  */
-function resolveVswhere(): string | undefined {
+async function resolveVswhere(): Promise<string | undefined> {
   const dir = process.env['PROGRAMFILES(X86)'] + '\\Microsoft Visual Studio\\Installer'
   const vswhere = dir + '\\' + VSWHERE
   if (!existsSync(vswhere)) return undefined
-  const result = spawnSync(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'productPath'], {
-    encoding: 'utf8',
-    windowsHide: true,
-  })
-  if (result.error !== undefined || result.status !== 0) return undefined
-  const path = result.stdout.trim()
+  const stdout = await runCommand(vswhere, [
+    '-latest', '-products', '*',
+    '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+    '-property', 'productPath',
+  ])
+  const path = stdout.trim()
   return path !== '' && existsSync(path) ? path : undefined
 }
 
 /** Probe one candidate on the current platform. */
-function resolveCandidate(candidate: EditorCandidate): EditorInfo | undefined {
+async function resolveCandidate(candidate: EditorCandidate): Promise<EditorInfo | undefined> {
   if (process.platform === 'win32') {
     // App Paths first: the registry records the real install path for
     // standalone installs on any drive.
     for (const exeName of candidate.appPaths ?? []) {
-      const path = resolveAppPath(exeName)
+      const path = await resolveAppPath(exeName)
       if (path !== undefined) {
         return { id: candidate.id, name: candidate.name, command: path }
       }
     }
     if (candidate.vswhere === true) {
-      const path = resolveVswhere()
+      const path = await resolveVswhere()
       if (path !== undefined) {
         return { id: candidate.id, name: candidate.name, command: path }
       }
@@ -391,7 +440,7 @@ function resolveCandidate(candidate: EditorCandidate): EditorInfo | undefined {
     }
   }
   for (const command of candidate.commands) {
-    const resolved = resolveCommand(command)
+    const resolved = await resolveCommand(command)
     if (resolved !== undefined) {
       return { id: candidate.id, name: candidate.name, command: resolved }
     }
@@ -399,18 +448,41 @@ function resolveCandidate(candidate: EditorCandidate): EditorInfo | undefined {
   return undefined
 }
 
-/** Detect every editor on this machine, caching the result for the TTL. */
-function detectEditors(): EditorInfo[] {
+/**
+ * Detect every editor on this machine, caching the result for the TTL. Probes
+ * run async (`spawn`, never `spawnSync`) under a small concurrency window:
+ * spawning dozens of `where`/`reg.exe` processes at once is itself slow on
+ * Windows, and page-switch lag came from exactly that burst. A cold detection
+ * therefore settles in about a second while the event loop stays responsive.
+ */
+async function detectEditors(): Promise<EditorInfo[]> {
   const now = Date.now()
   if (detectCache !== undefined && now - detectCache.at < DETECT_TTL_MS) {
     return detectCache.editors
   }
-  const editors = CANDIDATES.flatMap(candidate => {
-    const resolved = resolveCandidate(candidate)
-    return resolved === undefined ? [] : [resolved]
-  })
+  const results = await mapWithConcurrency(CANDIDATES, 4, resolveCandidate)
+  const editors = results.flatMap(resolved => resolved === undefined ? [] : [resolved])
   detectCache = { at: now, editors }
   return editors
+}
+
+/** Map async work over a list with a fixed concurrency window (no process burst). */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      results[index] = await worker(items[index] as T)
+    }
+  })
+  await Promise.all(runners)
+  return results
 }
 
 /** The Remote service: browser-facing endpoints for detection and launching. */
@@ -444,7 +516,7 @@ export class EditorLauncherService extends TypertRemoteService {
     if (candidate === undefined) {
       return { ok: false, error: `unknown editor "${editorId}"` }
     }
-    const editor = resolveCandidate(candidate)
+    const editor = await resolveCandidate(candidate)
     if (editor === undefined) {
       return { ok: false, error: `editor "${candidate.name}" is no longer available` }
     }

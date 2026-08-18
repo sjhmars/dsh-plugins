@@ -12,8 +12,10 @@ import css from './EditorPicker.module.css'
 
 /** Business face injected into the picker entry. */
 export interface EditorLauncherInjected {
-  /** Detect installed editors on the host. */
+  /** Detect installed editors (cross-session cached in the browser apply). */
   listEditors: () => Promise<EditorInfo[]>
+  /** Force a fresh host detection, bypassing the browser-side cache. */
+  refreshEditors: () => Promise<EditorInfo[]>
 }
 
 /** Full picker props: the utilities-slot runtime share, the locale seat, and the injected face. */
@@ -29,40 +31,43 @@ const REFRESH_ID = '__refresh__'
  * Render the Session-header editor picker capsule. Choosing an editor records
  * it as the preferred default (id + name, so the capsule label survives a
  * session switch); the click interceptor in the browser apply uses that id
- * when opening session file links. Editors are detected once on first mount —
- * re-opening the menu never re-probes the host — with a manual icon-only
- * refresh row for when editors are installed while the app is open.
+ * when opening session file links. Editors load lazily on first menu open and
+ * are cached across sessions in the browser apply, so page switches never
+ * re-issue detection RPCs; the icon-only refresh row forces a fresh probe.
  * @param props - slot runtime, localized copy, and the injected detection face.
  * @returns the picker capsule with its menu.
  */
-export function EditorPicker({ listEditors, t }: EditorPickerProps): ReactNode {
+export function EditorPicker({ listEditors, refreshEditors, t }: EditorPickerProps): ReactNode {
   const [open, setOpen] = useState(false)
   const [editors, setEditors] = useState<EditorInfo[] | null>(null)
   const [preferred, setPreferred] = useState(readPreferred())
+  // Guard: a remount after a page switch starts with null editors, and the
+  // shared cache makes the lazy load instant — no per-open re-probe.
+  const loadedOnce = useRef(false)
 
-  // First mount only: probe once, then rely on the manual refresh row. The
-  // previous per-open re-probe ran a `where`/`which` process per editor on
-  // every menu open — the reported lag.
+  // Lazy load on first open only; afterwards the apply-closure cache answers
+  // immediately (this component remounts per session, the cache does not).
   useEffect(() => {
+    if (!open || loadedOnce.current) return
+    loadedOnce.current = true
     let cancelled = false
     void listEditors().then(
       (found) => { if (!cancelled) setEditors(found) },
       () => { if (!cancelled) setEditors([]) },
     )
     return () => { cancelled = true }
-    // listEditors is stable across mounts (apply-closure callback).
-  }, [listEditors])
+  }, [open, listEditors])
 
   const refreshing = useRef(false)
   const refresh = useCallback(() => {
     if (refreshing.current) return
     refreshing.current = true
     setEditors(null)
-    void listEditors().then(
+    void refreshEditors().then(
       (found) => { setEditors(found); refreshing.current = false },
       () => { setEditors([]); refreshing.current = false },
     )
-  }, [listEditors])
+  }, [refreshEditors])
 
   const label = preferred !== undefined ? t('trigger.preferred', { name: preferred.name }) : t('trigger.default')
 
