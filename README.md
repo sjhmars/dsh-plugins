@@ -53,27 +53,6 @@ pnpm run typecheck    # = pnpm -r run typecheck
 
 > 插件的 `@deepseek-ai/*` 是 peerDependencies，运行时由 harness 安装树提供；类型解析走 `tsconfig.base.json` 的 `paths`（指向本地 harness checkout 的 `lib/types`）。构建用本地 harness checkout 的 tsc / tsdown（见各插件 README）。
 
-## 发布新版本 / Publish
-
-每个插件独立发布到 npm（在对应插件目录执行）：
-
-```sh
-cd H:\dsh-plugin\plugins\editor-launcher
-pnpm pack --dry-run    # 预览 tarball 内容
-pnpm version patch     # 0.1.0 → 0.1.1
-pnpm publish           # 需要先 npm login
-```
-
-用户侧更新：`dsh plugin --profile <name> update @dsh/editor-launcher`。
-
-## 添加新插件 / Adding a plugin
-
-1. 复制 `plugins/editor-launcher` 的骨架到 `plugins/<name>/`
-2. 改 `package.json`：`name`（`@<scope>/<name>`）、`dsh.bundle` patch、`dsh.client` manifest
-3. 写 `cordis.patch.yml` 插入插件行
-4. 实现 `src/index.ts`（Host 半部）+ `src/client/`（Browser 半部）
-5. 在根跑 `pnpm run build` 验证，然后按"发布新版本"流程发布
-
 ## License
 
 MIT
