@@ -1,0 +1,13 @@
+{
+  "name": "dsh-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepSeek Harness out-of-tree plugin collection (pnpm workspace)",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "pack": "pnpm -r run pack"
+  },
+  "license": "MIT"
+}
