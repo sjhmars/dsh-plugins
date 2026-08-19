@@ -1,6 +1,6 @@
 {
   "name": "@sjhmars/editor-launcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pick an installed editor from the Session header and open session file links with it, on Web and Desktop",
   "type": "module",
   "main": "lib/index.js",
