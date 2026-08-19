@@ -527,20 +527,29 @@ let EditorLauncherService = (() => {
                 return { ok: false, error: `editor "${candidate.name}" is no longer available` };
             }
             const args = [...(editor.args ?? []), filePath];
-            // `.cmd`/`.bat` shims (VS Code, JetBrains launchers) need a shell to execute.
-            const lower = editor.command.toLowerCase();
-            const shell = process.platform === 'win32' && (lower.endsWith('.cmd') || lower.endsWith('.bat'));
+            // `.cmd`/`.bat` shims (VS Code, JetBrains launchers) need cmd.exe to run.
+            // Do NOT use spawn's `shell: true` for them: it wraps the command line as
+            // `cmd /c ""path with spaces\file.bat" "arg""` whose extra outer quotes
+            // cmd's /S /C quote-stripping mangles into a bogus executable name. Pass
+            // the whole `/c` line verbatim (windowsVerbatimArguments) in the
+            // double-quoted `""path" "arg""` form cmd strips to the working line.
+            const isShim = process.platform === 'win32'
+                && /\.(cmd|bat)$/i.test(editor.command);
+            const spawnCommand = isShim ? (process.env.comspec ?? 'cmd.exe') : editor.command;
+            const spawnArgs = isShim
+                ? ['/d', '/s', '/c', `""${editor.command}" ${args.map(arg => `"${arg}"`).join(' ')}""`]
+                : args;
             // spawn failures are delivered asynchronously on the child's 'error'
             // event (ENOENT, EACCES) — a try/catch around spawn() cannot see them,
             // and an unhandled 'error' would crash the whole host process.
             return await new Promise((resolve) => {
                 let child;
                 try {
-                    child = spawn(editor.command, args, {
+                    child = spawn(spawnCommand, spawnArgs, {
                         detached: true,
                         stdio: 'ignore',
-                        shell,
                         windowsHide: true,
+                        windowsVerbatimArguments: isShim,
                     });
                 }
                 catch (error) {

@@ -553,16 +553,22 @@ let EditorLauncherService = (() => {
 				error: `editor "${candidate.name}" is no longer available`
 			};
 			const args = [...editor.args ?? [], filePath];
-			const lower = editor.command.toLowerCase();
-			const shell = process.platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"));
+			const isShim = process.platform === "win32" && /\.(cmd|bat)$/i.test(editor.command);
+			const spawnCommand = isShim ? process.env.comspec ?? "cmd.exe" : editor.command;
+			const spawnArgs = isShim ? [
+				"/d",
+				"/s",
+				"/c",
+				`""${editor.command}" ${args.map((arg) => `"${arg}"`).join(" ")}""`
+			] : args;
 			return await new Promise((resolve) => {
 				let child;
 				try {
-					child = spawn(editor.command, args, {
+					child = spawn(spawnCommand, spawnArgs, {
 						detached: true,
 						stdio: "ignore",
-						shell,
-						windowsHide: true
+						windowsHide: true,
+						windowsVerbatimArguments: isShim
 					});
 				} catch (error) {
 					resolve({
