@@ -251,6 +251,10 @@ const CANDIDATES = [
         id: 'visual-studio',
         name: 'Visual Studio',
         commands: [],
+        // `/edit` opens the file in an EXISTING instance (or starts a fresh one);
+        // without it devenv spawns a new full instance per file, which appears
+        // as a slow "no reaction" while the Enterprise shell cold-starts.
+        args: ['/edit'],
         vswhere: true,
         paths: {},
     },
@@ -432,13 +436,13 @@ async function resolveCandidate(candidate) {
         for (const exeName of candidate.appPaths ?? []) {
             const path = await resolveAppPath(exeName);
             if (path !== undefined) {
-                return { id: candidate.id, name: candidate.name, command: path };
+                return { id: candidate.id, name: candidate.name, command: path, ...candidate.args !== undefined && { args: [...candidate.args] } };
             }
         }
         if (candidate.vswhere === true) {
             const path = await resolveVswhere();
             if (path !== undefined) {
-                return { id: candidate.id, name: candidate.name, command: path };
+                return { id: candidate.id, name: candidate.name, command: path, ...candidate.args !== undefined && { args: [...candidate.args] } };
             }
         }
     }
@@ -450,13 +454,13 @@ async function resolveCandidate(candidate) {
     }
     for (const path of candidate.paths[process.platform] ?? []) {
         if (path !== undefined && existsSync(path)) {
-            return { id: candidate.id, name: candidate.name, command: path };
+            return { id: candidate.id, name: candidate.name, command: path, ...candidate.args !== undefined && { args: [...candidate.args] } };
         }
     }
     for (const command of candidate.commands) {
         const resolved = await resolveCommand(command);
         if (resolved !== undefined) {
-            return { id: candidate.id, name: candidate.name, command: resolved };
+            return { id: candidate.id, name: candidate.name, command: resolved, ...candidate.args !== undefined && { args: [...candidate.args] } };
         }
     }
     return undefined;

@@ -246,6 +246,7 @@ const CANDIDATES = [
 		id: "visual-studio",
 		name: "Visual Studio",
 		commands: [],
+		args: ["/edit"],
 		vswhere: true,
 		paths: {}
 	},
@@ -420,7 +421,8 @@ async function resolveCandidate(candidate) {
 			if (path !== void 0) return {
 				id: candidate.id,
 				name: candidate.name,
-				command: path
+				command: path,
+				...candidate.args !== void 0 && { args: [...candidate.args] }
 			};
 		}
 		if (candidate.vswhere === true) {
@@ -428,7 +430,8 @@ async function resolveCandidate(candidate) {
 			if (path !== void 0) return {
 				id: candidate.id,
 				name: candidate.name,
-				command: path
+				command: path,
+				...candidate.args !== void 0 && { args: [...candidate.args] }
 			};
 		}
 	}
@@ -444,14 +447,16 @@ async function resolveCandidate(candidate) {
 	for (const path of candidate.paths[process.platform] ?? []) if (path !== void 0 && existsSync(path)) return {
 		id: candidate.id,
 		name: candidate.name,
-		command: path
+		command: path,
+		...candidate.args !== void 0 && { args: [...candidate.args] }
 	};
 	for (const command of candidate.commands) {
 		const resolved = await resolveCommand(command);
 		if (resolved !== void 0) return {
 			id: candidate.id,
 			name: candidate.name,
-			command: resolved
+			command: resolved,
+			...candidate.args !== void 0 && { args: [...candidate.args] }
 		};
 	}
 }
