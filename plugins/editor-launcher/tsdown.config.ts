@@ -11,7 +11,7 @@ import { basename, dirname, resolve as resolvePath, sep } from 'node:path'
 import { transform } from 'lightningcss'
 import type { UserConfig } from 'tsdown'
 
-const PLUGIN_ID = '@dsh/editor-launcher'
+const PLUGIN_ID = '@sjhmars/editor-launcher'
 
 /** Wire/type layers the client bundle may inline (no shared runtime identity). */
 const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand)(\/|$)/

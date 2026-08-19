@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "@dsh/editor-launcher",
+	id: "@sjhmars/editor-launcher",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -37,10 +37,10 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region \0dsh-css:H:\dsh-plugin\plugins\editor-launcher\src\client\EditorPicker.module.css.mjs
 		const css = ".cy5Iia_pickerButton{border:1px solid var(--dsw-alias-border-l2);height:32px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);cursor:pointer;background:0 0;border-radius:18px;justify-content:center;align-items:center;gap:4px;padding:6px 12px;font-size:13px;font-weight:400;line-height:20px;display:inline-flex}.cy5Iia_pickerButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.cy5Iia_pickerButton:disabled{color:var(--dsw-alias-label-dimmed);cursor:wait}.cy5Iia_pickerButton span,.cy5Iia_pickerButton svg{flex:none}.cy5Iia_pickerButton span{white-space:nowrap;text-overflow:ellipsis;max-width:160px;overflow:hidden}";
-		const tagId = "@dsh/editor-launcher/EditorPicker.module.css";
+		const tagId = "@sjhmars/editor-launcher/EditorPicker.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
-			tag.dataset.plugin = "@dsh/editor-launcher";
+			tag.dataset.plugin = "@sjhmars/editor-launcher";
 			tag.dataset.pluginCss = tagId;
 			tag.textContent = css;
 			document.head.appendChild(tag);

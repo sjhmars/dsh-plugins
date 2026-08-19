@@ -4,7 +4,7 @@
  * SRC claim path (`TypertRemoteService` binding + `@Remote` markers), which is
  * reachable from both the Web and Desktop carriers over the shared `/api`
  * channel.
- * @module @dsh/editor-launcher
+ * @module @sjhmars/editor-launcher
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';

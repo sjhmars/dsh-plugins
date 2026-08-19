@@ -20,14 +20,14 @@ dsh-plugins/
 
 | 插件 | 用途 | 安装命令 |
 |---|---|---|
-| [`@dsh/editor-launcher`](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web 端）。 | `dsh plugin --profile web add @dsh/editor-launcher` |
+| [`@sjhmars/editor-launcher`](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web 端）。 | `dsh plugin --profile web add @sjhmars/editor-launcher` |
 
 ### 安装说明 / Install
 
 在 web profile 安装：
 
 ```sh
-dsh plugin --profile web add @dsh/editor-launcher
+dsh plugin --profile web add @sjhmars/editor-launcher
 ```
 
 未发布 / 本地开发时，可直接从本仓库目录安装（走 pnpm link，适合边改边测）：

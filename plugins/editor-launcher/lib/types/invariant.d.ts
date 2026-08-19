@@ -1,4 +1,4 @@
-/** Package invariant companion for `@dsh/editor-launcher`. */
+/** Package invariant companion for `@sjhmars/editor-launcher`. */
 import type { Context } from '@deepseek-ai/cordis';
 export declare const name = "editor-launcher-invariant";
 export declare const inject: string[];

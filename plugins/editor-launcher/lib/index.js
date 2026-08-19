@@ -8,7 +8,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 * SRC claim path (`TypertRemoteService` binding + `@Remote` markers), which is
 * reachable from both the Web and Desktop carriers over the shared `/api`
 * channel.
-* @module @dsh/editor-launcher
+* @module @sjhmars/editor-launcher
 */
 var __runInitializers = function(thisArg, initializers, value) {
 	var useValue = arguments.length > 2;

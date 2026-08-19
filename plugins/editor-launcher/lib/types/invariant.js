@@ -1,5 +1,5 @@
-/** Package invariant companion for `@dsh/editor-launcher`. */
-const PACKAGE_NAME = '@dsh/editor-launcher';
+/** Package invariant companion for `@sjhmars/editor-launcher`. */
+const PACKAGE_NAME = '@sjhmars/editor-launcher';
 export const name = 'editor-launcher-invariant';
 export const inject = ['invariants'];
 /** No runtime invariant: detection and launching are one-shot process capabilities with no owned event stream to observe. */

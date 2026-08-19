@@ -1,6 +1,6 @@
-# The @dsh/editor-launcher bundle layer: inserts the plugin row that the
+# The @sjhmars/editor-launcher bundle layer: inserts the plugin row that the
 # profile composes. Applied when a profile lists this package in its
 # `dsh.profile.bundles` (which `dsh plugin add` maintains automatically).
 - insert:
     - id: editor-launcher
-      name: '@dsh/editor-launcher'
+      name: '@sjhmars/editor-launcher'

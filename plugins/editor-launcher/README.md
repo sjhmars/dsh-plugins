@@ -1,8 +1,8 @@
-# @dsh/editor-launcher
+# @sjhmars/editor-launcher
 
-在 Session 头部（Session log 按钮左侧）加一个**编辑器选择器**：列出本机已安装的编辑器，选中即记为默认；之后**点击会话中模型 Read/Edit/Write 输出的文件路径链接**，就会用你选的编辑器打开该文件（Web 与桌面客户端都支持）。
+在 Session 头部（Session log 按钮左侧）加一个**编辑器选择器**：列出本机已安装的编辑器，选中即记为默认；之后**点击会话中模型 Read/Edit/Write 输出的文件路径链接**，就会用你选的编辑器打开该文件（Web 端）。
 
-Adds an **editor picker** to the Session header (left of the Session-log button): it lists the editors installed on this machine, and the one you choose is remembered as the default. After that, **clicking the file-path links the model produced in Read/Edit/Write tool rows opens those files with your chosen editor** (Web and Desktop).
+Adds an **editor picker** to the Session header (left of the Session-log button): it lists the editors installed on this machine, and the one you choose is remembered as the default. After that, **clicking the file-path links the model produced in Read/Edit/Write tool rows opens those files with your chosen editor** (Web).
 
 ## 工作原理 / How it works
 
@@ -15,25 +15,13 @@ Adds an **editor picker** to the Session header (left of the Session-log button)
 
 ## 安装 / Install
 
-要求先构建好插件产物，再装入 profile（Web 与桌面是两个 profile，patch 行可共用一份 home 级 `cordis.patch.yml`）。
+从 npm 安装到 web profile：
 
 ```sh
-# 1. 构建（见下方"构建 / Build"，tsc 产出 lib/types，tsdown 产出 lib/index.js + lib/client.js）
-
-# 2. 安装到 profile（web 与 desktop 各一次；也可只装你要用的那个）
-dsh plugin --profile web add H:\dsh-plugin
-dsh plugin --profile desktop add H:\dsh-plugin
+dsh plugin --profile web add @sjhmars/editor-launcher
 ```
 
-然后在 `$DSH_HOME/cordis.patch.yml`（home 级，web+desktop 均生效；或按 profile 分开放到各自目录）加入：
-
-```yaml
-- insert:
-    - id: editor-launcher
-      name: '@dsh/editor-launcher'
-```
-
-重启 `dsh web` / 桌面客户端即可。Session log 左侧会出现"用编辑器打开"胶囊；点击会话中的 Read/Edit/Write 文件链接即用所选编辑器打开。
+重启 `dsh web` 即可。Session log 左侧会出现"用编辑器打开"胶囊；点击会话中的 Read/Edit/Write 文件链接即用所选编辑器打开。
 
 ## 构建 / Build
 
