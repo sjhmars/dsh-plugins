@@ -93,39 +93,41 @@ window.__ModuleLoader__.load({
 				});
 			}, [refreshEditors]);
 			const label = preferred !== void 0 ? t("trigger.preferred", { name: preferred.name }) : t("trigger.default");
+			const items = editors === null ? [{
+				type: "label",
+				id: "loading",
+				text: "…"
+			}] : editors.length === 0 ? [{
+				type: "label",
+				id: "empty",
+				text: t("menu.noEditors")
+			}] : [{
+				type: "label",
+				id: "editors",
+				text: t("menu.editors")
+			}, ...editors.map((editor) => ({
+				id: editor.id,
+				label: editor.name
+			}))];
+			const footer = [{
+				type: "separator",
+				id: "refresh-sep"
+			}, {
+				id: REFRESH_ID,
+				label: "",
+				icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					role: "img",
+					"aria-label": t("menu.refresh"),
+					title: t("menu.refresh"),
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline14, { size: 14 })
+				})
+			}];
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 				open,
 				align: "end",
 				portal: true,
-				items: editors === null ? [{
-					type: "label",
-					id: "loading",
-					text: "…"
-				}] : editors.length === 0 ? [{
-					type: "label",
-					id: "empty",
-					text: t("menu.noEditors")
-				}] : [{
-					type: "label",
-					id: "editors",
-					text: t("menu.editors")
-				}, ...editors.map((editor) => ({
-					id: editor.id,
-					label: editor.name
-				}))],
-				footer: [{
-					type: "separator",
-					id: "refresh-sep"
-				}, {
-					id: REFRESH_ID,
-					label: "",
-					icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-						role: "img",
-						"aria-label": t("menu.refresh"),
-						title: t("menu.refresh"),
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline14, { size: 14 })
-					})
-				}],
+				items,
+				footer,
 				selectedId: preferred?.id,
 				onSelect: (id) => {
 					if (id === REFRESH_ID) {

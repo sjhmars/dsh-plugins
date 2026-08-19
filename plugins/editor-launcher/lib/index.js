@@ -42,8 +42,10 @@ var __esDecorate = function(ctor, descriptorIn, decorators, contextIn, initializ
 			if (_ = accept(result.get)) descriptor.get = _;
 			if (_ = accept(result.set)) descriptor.set = _;
 			if (_ = accept(result.init)) initializers.unshift(_);
-		} else if (_ = accept(result)) if (kind === "field") initializers.unshift(_);
-		else descriptor[key] = _;
+		} else if (_ = accept(result)) {
+			if (kind === "field") initializers.unshift(_);
+			else descriptor[key] = _;
+		}
 	}
 	if (target) Object.defineProperty(target, contextIn.name, descriptor);
 	done = true;
@@ -360,11 +362,11 @@ function runCommand(command, args) {
 function resolveCommand(command) {
 	const onWindows = process.platform === "win32";
 	const candidates = onWindows ? [
-		command,
-		`${command}.exe`,
-		`${command}.cmd`,
-		`${command}.bat`
-	] : [command];
+		"exe",
+		"cmd",
+		"bat",
+		"com"
+	].map((ext) => `${command}.${ext}`) : [command];
 	const dirs = (process.env.PATH ?? "").split(onWindows ? ";" : ":");
 	const sep = onWindows ? "\\" : "/";
 	for (const dir of dirs) {
@@ -425,7 +427,8 @@ async function resolveCandidate(candidate) {
 		}
 	}
 	if (process.platform === "darwin" && candidate.macApp !== void 0) {
-		if (existsSync(`/Applications/${candidate.macApp}.app`)) return {
+		const bundle = `/Applications/${candidate.macApp}.app`;
+		if (existsSync(bundle)) return {
 			id: candidate.id,
 			name: candidate.name,
 			command: "open",
@@ -552,20 +555,33 @@ let EditorLauncherService = (() => {
 			const args = [...editor.args ?? [], filePath];
 			const lower = editor.command.toLowerCase();
 			const shell = process.platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"));
-			try {
-				spawn(editor.command, args, {
-					detached: true,
-					stdio: "ignore",
-					shell,
-					windowsHide: true
-				}).unref();
-				return { ok: true };
-			} catch (error) {
-				return {
-					ok: false,
-					error: error instanceof Error ? error.message : String(error)
-				};
-			}
+			return await new Promise((resolve) => {
+				let child;
+				try {
+					child = spawn(editor.command, args, {
+						detached: true,
+						stdio: "ignore",
+						shell,
+						windowsHide: true
+					});
+				} catch (error) {
+					resolve({
+						ok: false,
+						error: error instanceof Error ? error.message : String(error)
+					});
+					return;
+				}
+				child.once("error", (error) => {
+					resolve({
+						ok: false,
+						error: error instanceof Error ? error.message : String(error)
+					});
+				});
+				child.once("spawn", () => {
+					child.unref();
+					resolve({ ok: true });
+				});
+			});
 		}
 	};
 })();

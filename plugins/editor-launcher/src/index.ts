@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { EditorInfo, OpenResult } from './types.ts'
@@ -360,10 +360,13 @@ function runCommand(command: string, args: readonly string[]): Promise<string> {
 function resolveCommand(command: string): string | undefined {
   // PATH parse, not `where`: reading the environment is instant, while a
   // `where` subprocess costs ~1s per command on Windows. Match `where`'s
-  // PATHEXT semantics: try the bare name, then .exe/.cmd/.bat.
+  // PATHEXT semantics: on Windows only extension-bearing names are
+  // executable, and the extension-less file many editors ship beside their
+  // shim (e.g. Cursor's `bin/cursor` bash script) is NOT spawnable — trying
+  // it would resolve detection to a path whose spawn always fails.
   const onWindows = process.platform === 'win32'
   const candidates = onWindows
-    ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
+    ? ['exe', 'cmd', 'bat', 'com'].map(ext => `${command}.${ext}`)
     : [command]
   const dirs = (process.env.PATH ?? '').split(onWindows ? ';' : ':')
   const sep = onWindows ? '\\' : '/'
@@ -524,18 +527,30 @@ export class EditorLauncherService extends TypertRemoteService {
     // `.cmd`/`.bat` shims (VS Code, JetBrains launchers) need a shell to execute.
     const lower = editor.command.toLowerCase()
     const shell = process.platform === 'win32' && (lower.endsWith('.cmd') || lower.endsWith('.bat'))
-    try {
-      const child = spawn(editor.command, args, {
-        detached: true,
-        stdio: 'ignore',
-        shell,
-        windowsHide: true,
+    // spawn failures are delivered asynchronously on the child's 'error'
+    // event (ENOENT, EACCES) — a try/catch around spawn() cannot see them,
+    // and an unhandled 'error' would crash the whole host process.
+    return await new Promise<OpenResult>((resolve) => {
+      let child: ChildProcess
+      try {
+        child = spawn(editor.command, args, {
+          detached: true,
+          stdio: 'ignore',
+          shell,
+          windowsHide: true,
+        })
+      } catch (error) {
+        resolve({ ok: false, error: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      child.once('error', (error) => {
+        resolve({ ok: false, error: error instanceof Error ? error.message : String(error) })
       })
-      child.unref()
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
+      child.once('spawn', () => {
+        child.unref()
+        resolve({ ok: true })
+      })
+    })
   }
 }
 
