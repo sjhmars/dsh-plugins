@@ -22,24 +22,23 @@ dsh-plugins/
 
 | 插件 | 用途 | 安装命令 |
 |---|---|---|
-| [`@dsh/editor-launcher`](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web + 桌面）。 | `dsh plugin --profile <web\|desktop> add @dsh/editor-launcher` |
+| [`@dsh/editor-launcher`](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web 端）。 | `dsh plugin --profile web add @dsh/editor-launcher` |
 
 ### 安装说明 / Install
 
-发布到 npm 后，在任意 profile 安装（`web` 和 `desktop` 分别执行）：
+在 web profile 安装：
 
 ```sh
 dsh plugin --profile web add @dsh/editor-launcher
-dsh plugin --profile desktop add @dsh/editor-launcher
 ```
 
 未发布 / 本地开发时，可直接从本仓库目录安装（走 pnpm link，适合边改边测）：
 
 ```sh
-dsh plugin --profile desktop add H:\dsh-plugin\plugins\editor-launcher
+dsh plugin --profile web add H:\dsh-plugin\plugins\editor-launcher
 ```
 
-安装后重启 `dsh web` / 桌面客户端即可生效。每个插件的详细使用说明见各自目录的 `README.md`。
+安装后重启 `dsh web` 即可生效。每个插件的详细使用说明见各自目录的 `README.md`。
 
 ## 构建 / Build
 
