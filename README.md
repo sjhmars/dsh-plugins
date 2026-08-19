@@ -1,8 +1,6 @@
 # dsh-plugins
 
-DeepSeek Harness 的**插件集合仓库**（pnpm workspace）。每个插件是一个独立 npm 包，位于 `plugins/<name>/`，可单独构建、打包、发布到 npm，用户通过 `dsh plugin` 安装到任意 profile（web / desktop）。
-
-A **plugin collection repo** for DeepSeek Harness (pnpm workspace). Each plugin is an independent npm package under `plugins/<name>/`, buildable, packable, and publishable on its own; users install any of them into a profile (web / desktop) via `dsh plugin`.
+DeepSeek Harness 的**插件集合仓库**（pnpm workspace）。每个插件是一个独立 npm 包，位于 `plugins/<name>/`，可单独构建、打包、发布到 npm，通过 `dsh plugin` 安装到profile。
 
 ## 仓库结构 / Layout
 
