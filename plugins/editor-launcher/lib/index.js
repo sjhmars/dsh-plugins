@@ -374,7 +374,13 @@ function resolveCommand(command) {
 		const base = dir.replace(/[/\\]+$/, "");
 		for (const name of candidates) {
 			const candidate = `${base}${sep}${name}`;
-			if (existsSync(candidate)) return candidate;
+			if (existsSync(candidate)) {
+				if (onWindows && /\.(bat|cmd)$/i.test(name)) for (const exeName of [`${command}.exe`, `${command}64.exe`]) {
+					const exe = `${base}${sep}${exeName}`;
+					if (existsSync(exe)) return exe;
+				}
+				return candidate;
+			}
 		}
 	}
 }

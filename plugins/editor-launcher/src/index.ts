@@ -375,7 +375,18 @@ function resolveCommand(command: string): string | undefined {
     const base = dir.replace(/[/\\]+$/, '')
     for (const name of candidates) {
       const candidate = `${base}${sep}${name}`
-      if (existsSync(candidate)) return candidate
+      if (existsSync(candidate)) {
+        // A `.bat`/`.cmd` shim (JetBrains launchers) flashes a console window
+        // on spawn; prefer the sibling `.exe` the editor ships beside it
+        // (idea.bat → idea64.exe), which launches without a console.
+        if (onWindows && /\.(bat|cmd)$/i.test(name)) {
+          for (const exeName of [`${command}.exe`, `${command}64.exe`]) {
+            const exe = `${base}${sep}${exeName}`
+            if (existsSync(exe)) return exe
+          }
+        }
+        return candidate
+      }
     }
   }
   return undefined
