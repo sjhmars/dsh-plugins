@@ -54,6 +54,43 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
+  plugins/task-notify:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: '>=0.1.0-rc.5'
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@deepseek-ai/dsh-agent':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.7(3e9ada498f4122833c41bf0b8a7006a0)
+      '@deepseek-ai/dsh-invariants':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)
+      '@deepseek-ai/dsh-session':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.7(ac9cdf08eabb20a4e53559a19ae09e19)
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-user-approval':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.7(0e60389e09a0218a8df655f1aa11eb12)
+      '@deepseek-ai/dsh-user-questions':
+        specifier: '>=0.1.0-rc.5'
+        version: 0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-agent@0.1.0-rc.7(3e9ada498f4122833c41bf0b8a7006a0))(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-llm@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1))))
+      '@deepseek-ai/schemastery':
+        specifier: '>=0.1.0-rc.5'
+        version: 3.18.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.0
+        version: 22.20.1
+      tsdown:
+        specifier: ^0.22.2
+        version: 0.22.14(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
 packages:
 
   '@deepseek-ai/cordis-plugin-include@1.0.6':

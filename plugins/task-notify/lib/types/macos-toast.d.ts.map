@@ -1,1 +1,1 @@
-{"version":3,"file":"macos-toast.d.ts","sourceRoot":"","sources":["../../src/macos-toast.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAGH,OAAO,KAAK,EAAE,aAAa,EAAE,YAAY,EAAE,MAAM,YAAY,CAAA;AAO7D;;;;GAIG;AACH,wBAAgB,cAAc,CAAC,OAAO,EAAE,aAAa,GAAG,OAAO,CAAC,YAAY,CAAC,CA0B5E"}
+{"version":3,"file":"macos-toast.d.ts","sourceRoot":"","sources":["../../src/macos-toast.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAGH,OAAO,KAAK,EAAE,aAAa,EAAE,YAAY,EAAE,MAAM,YAAY,CAAA;AAe7D;;;;GAIG;AACH,wBAAgB,cAAc,CAAC,OAAO,EAAE,aAAa,GAAG,OAAO,CAAC,YAAY,CAAC,CA0B5E"}

@@ -3,9 +3,17 @@
  * AppleScript 字符串必须转义；本机不验收这条通道。
  */
 import { spawn } from 'node:child_process';
-/** 把用户文本放进 AppleScript 双引号字符串之前先转义。 */
+/**
+ * 把用户文本放进 AppleScript 双引号字符串之前先收成一行再转义。
+ * 换行、回车和其他控制字符会拆开 `-e` 脚本，osascript 会失败。
+ */
 function escapeAppleScript(value) {
-    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return value
+        .replace(/[\u0000-\u001F\u007F\u2028\u2029]+/g, ' ')
+        .replace(/ {2,}/g, ' ')
+        .trim()
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"');
 }
 /**
  * 用 `osascript display notification` 弹出一条 macOS 通知。

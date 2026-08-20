@@ -10,9 +10,12 @@ import { fileURLToPath } from "node:url";
 * macOS 系统通知：Web 宿主（普通 Node）走 osascript。
 * AppleScript 字符串必须转义；本机不验收这条通道。
 */
-/** 把用户文本放进 AppleScript 双引号字符串之前先转义。 */
+/**
+* 把用户文本放进 AppleScript 双引号字符串之前先收成一行再转义。
+* 换行、回车和其他控制字符会拆开 `-e` 脚本，osascript 会失败。
+*/
 function escapeAppleScript(value) {
-	return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+	return value.replace(/[\u0000-\u001F\u007F\u2028\u2029]+/g, " ").replace(/ {2,}/g, " ").trim().replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }
 /**
 * 用 `osascript display notification` 弹出一条 macOS 通知。
@@ -517,6 +520,7 @@ var HostDesktopNotifier = class {
 * Host 半部：桌面通知能力 = 接口（DesktopNotifier）+ Electron/Windows/macOS
 * 提供方 + 三类消费者（任务结束、权限审批、向用户提问）。
 * Web 与 Desktop 共用同一条 Host 组合，无需浏览器 Notification 权限。
+* （样式复测：新样式卡片，点任意按钮验证。）
 * @module @sjhmars/task-notify
 */
 var __runInitializers = function(thisArg, initializers, value) {

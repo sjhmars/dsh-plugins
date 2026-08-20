@@ -2,6 +2,7 @@
  * Host 半部：桌面通知能力 = 接口（DesktopNotifier）+ Electron/Windows/macOS
  * 提供方 + 三类消费者（任务结束、权限审批、向用户提问）。
  * Web 与 Desktop 共用同一条 Host 组合，无需浏览器 Notification 权限。
+ * （样式复测：新样式卡片，点任意按钮验证。）
  * @module @sjhmars/task-notify
  */
 import type { Context } from '@deepseek-ai/cordis';
