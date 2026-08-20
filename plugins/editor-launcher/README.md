@@ -50,5 +50,3 @@ VS Code / VS Code Insiders、Cursor、Sublime Text、Notepad++、Neovim、Vim，
 ## 已知限制 / Known Limitations
 
 - 编辑器候选清单内置在 Host 代码中，暂不支持用户配置额外编辑器（`extraEditors` 留作后续）。
-- 点击拦截依赖 `ToolRow` 的 DOM 结构（`[data-tool]` 行 + 无 `aria-expanded` 的路径按钮）；若产品侧改动该结构，需同步更新 `src/client/index.ts` 的识别逻辑。
-- 未设置默认编辑器时点击不拦截（保持系统默认应用行为）。

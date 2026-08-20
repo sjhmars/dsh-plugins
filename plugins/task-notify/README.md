@@ -1,3 +1,11 @@
+<!--
+ * @Author: sjhmars sujiahao2@37.com
+ * @Date: 2026-08-19 14:37:59
+ * @LastEditors: sjhmars sujiahao2@37.com
+ * @LastEditTime: 2026-08-20 21:52:14
+ * @FilePath: \dsh-plugin\plugins\task-notify\README.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
 # @sjhmars/task-notify
 
 切到别的窗口时也能知道 Agent 在等你：任务做完、工具要你批准、或向你提问，都会在桌面右下角弹出通知。Web 和 Desktop 共用这一条 Host 插件，不向浏览器申请通知权限。
@@ -95,9 +103,5 @@ Windows 通知顶栏显示 **DeepSeek Harness** 和产品图标。Host 加载时
 
 ## 已知限制 / Known Limitations
 
-- **Linux 不弹通知** — 失败记日志，插件照常加载。
-- **macOS `osascript` 通道未在本机验收** — 代码路径存在；Desktop 上优先走 Electron。
-- **不注册第二套 userQuestions provider** — 每个上下文只能有一个；本插件只包一层已有的 `ask()`。
 - **关掉通知 ≠ 拒绝** — 点「允许一次 / 拒绝」才直接裁决。关掉卡片或等到超时，把决定权交给网页黄框。
 - **审批卡片和网页黄框不能同时点** — 点了卡片按钮就不出这次黄框；黄框出现时卡片这条路已经结束。两边同时可点需要改 Harness。
-- **Electron / macOS 审批通知不带按钮** — Desktop 点通知仍只唤回窗口，批准还是在应用里点。Linux 仍不弹。
