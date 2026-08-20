@@ -1,0 +1,1 @@
+{"version":3,"file":"toast-channel.d.ts","sourceRoot":"","sources":["../../src/toast-channel.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAOH,OAAO,KAAK,EAAE,aAAa,EAAE,YAAY,EAAE,MAAM,YAAY,CAAA;AAwS7D;;GAEG;AACH,wBAAgB,yBAAyB,IAAI,OAAO,CAAC,IAAI,CAAC,CAGzD;AAED,mBAAmB;AACnB,wBAAgB,0BAA0B,IAAI,IAAI,CAEjD;AAED;;;GAGG;AACH,wBAAgB,gBAAgB,CAAC,OAAO,EAAE,aAAa,GAAG,OAAO,CAAC,YAAY,CAAC,CAE9E"}

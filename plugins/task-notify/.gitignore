@@ -1,0 +1,5 @@
+# Local overlay with a machine-specific file:// path. Do not publish.
+dev.cordis.yml
+
+# Leftover; the shipped toast asset is lib/icon.png.
+lib/icon.ico

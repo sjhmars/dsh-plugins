@@ -1,0 +1,7 @@
+# The @sjhmars/task-notify bundle layer: inserts the host plugin that
+# shows a desktop notification when an agent returns to idle after running,
+# when approval asks the human, or when userQuestions.ask waits for an answer.
+# Applied when a profile lists this package in its `dsh.profile.bundles`.
+- insert:
+    - id: task-notify
+      name: '@sjhmars/task-notify'
