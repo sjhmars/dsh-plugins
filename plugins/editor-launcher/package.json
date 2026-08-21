@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@sjhmars/editor-launcher",
   "version": "0.1.4",
   "description": "Pick an installed editor from the Session header and open session file links with it, on Web and Desktop",
@@ -19,6 +19,15 @@
   },
   "license": "MIT",
   "publishConfig": { "access": "public" },
+  "disclosure": {
+    "cloud": false,
+    "network": [],
+    "offlineMode": true,
+    "apiKeys": [],
+    "permissions": ["file-system:detect-editors", "process:launch-editors"],
+    "jurisdiction": [],
+    "retention": "none"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sjhmars/dsh-plugins.git",

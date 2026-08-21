@@ -97,6 +97,22 @@ pnpm install
 pnpm --filter @sjhmars/task-notify run build
 ```
 
+## 发布到 npm / Publish
+
+根目录 `dsh-plugins` 标了 `private`，在 `H:\dsh-plugin` 里直接 `pnpm publish` 会失败。要发布的是插件包：
+
+```sh
+cd H:\dsh-plugin
+pnpm --filter @sjhmars/task-notify publish --no-git-checks --access public
+```
+
+或进入目录再发：
+
+```sh
+cd H:\dsh-plugin\plugins\task-notify
+pnpm publish --no-git-checks --access public
+```
+
 `@deepseek-ai/*` 是 peerDependencies，运行时由 harness 安装树提供。
 
 Windows 通知顶栏显示 **DeepSeek Harness** 和产品图标。Host 加载时准备一条常驻 PowerShell 通道：快捷方式和 AUMID 只在缺或坏了时登记，之后任务结束 / 提问只弹出系统通知。审批卡片由另一条 Hidden PowerShell 画出，避免助手进程自己没有窗口导致卡片出不来。

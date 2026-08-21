@@ -18,6 +18,19 @@
   },
   "license": "MIT",
   "publishConfig": { "access": "public" },
+  "disclosure": {
+    "cloud": false,
+    "network": [],
+    "offlineMode": true,
+    "apiKeys": [],
+    "permissions": [
+      "file-system:toast-state",
+      "registry:app-user-model-id",
+      "process:launch-powershell"
+    ],
+    "jurisdiction": [],
+    "retention": "session"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sjhmars/dsh-plugins.git",

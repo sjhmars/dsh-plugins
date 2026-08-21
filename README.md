@@ -67,6 +67,13 @@ pnpm run typecheck    # = pnpm -r run typecheck
 
 > 插件的 `@deepseek-ai/*` 是 peerDependencies，运行时由 harness 安装树提供；类型解析走 `tsconfig.base.json` 的 `paths`（指向本地 harness checkout 的 `lib/types`）。构建用本地 harness checkout 的 tsc / tsdown（见各插件 README）。
 
+根目录 `dsh-plugins` 是 `private` 工作区，**不要在仓库根执行 `pnpm publish`**。发布某一个插件：
+
+```sh
+cd H:\dsh-plugin
+pnpm --filter @sjhmars/task-notify publish --no-git-checks --access public
+```
+
 ## License
 
 MIT
