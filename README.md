@@ -25,7 +25,7 @@ dsh-plugins/
 | 插件（npm） | 用途 | 安装命令 |
 |---|---|---|
 | [`@sjhmars/editor-launcher`](https://www.npmjs.com/package/@sjhmars/editor-launcher) · [源码](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web 端）。 | `dsh plugin --profile web add @sjhmars/editor-launcher` |
-| [`@sjhmars/task-notify`](https://www.npmjs.com/package/@sjhmars/task-notify) · [源码](plugins/task-notify) | Agent 任务结束、工具要你批准、或向你提问时弹出桌面通知。Windows 上 `dsh web` 的批准是右下角卡片（允许一次 / 拒绝 / 关闭后出网页黄框）。 | `dsh plugin --profile web add @sjhmars/task-notify` |
+| [`@sjhmars/task-notify`](https://www.npmjs.com/package/@sjhmars/task-notify) · [源码](plugins/task-notify) | Agent 任务结束、工具要你批准、或向你提问时弹出桌面通知。Windows 上 Web 和 Desktop 的批准都是右下角卡片（允许一次 / 拒绝 / 关闭后出黄框）。 | `dsh plugin --profile web add @sjhmars/task-notify` |
 
 ### 安装说明 / Install
 

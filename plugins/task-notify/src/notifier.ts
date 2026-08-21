@@ -1,6 +1,6 @@
 /**
- * 桌面通知提供方：Desktop 优先 Electron Notification（点一下能唤回窗口），
- * 否则按平台走 Windows Toast 或 macOS osascript。
+ * 桌面通知提供方：任务结束 / 提问时 Desktop 优先 Electron Notification（点一下能唤回窗口）；
+ * Windows 上批准工具一律走带按钮的卡片，Web 与 Desktop 相同。
  */
 
 import type { DesktopNotifier, NotifyRequest, NotifyResult } from './types.ts'
@@ -56,11 +56,13 @@ export async function isDesktopWindowFocused(): Promise<boolean> {
 /** Host 桌面通知提供方：Electron，否则 Windows / macOS 系统通知。 */
 export class HostDesktopNotifier implements DesktopNotifier {
   /**
-   * 弹出一条通知：先试 Electron，再按平台回退。
-   * Windows 审批等待时带按钮；Electron / macOS 忽略按钮，调用方视为未做决定。
+   * 弹出一条通知：Windows 批准走带按钮的卡片；其余先试 Electron，再按平台回退。
    * @param request - 标题、正文、声音，以及可选的审批等待。
    */
   async notify(request: NotifyRequest): Promise<NotifyResult> {
+    if (request.approvalActions === true && process.platform === 'win32') {
+      return sendWindowsToast(request)
+    }
     const electronResult = await this.notifyElectron(request)
     if (electronResult !== undefined) return electronResult
     if (process.platform === 'win32') return sendWindowsToast(request)

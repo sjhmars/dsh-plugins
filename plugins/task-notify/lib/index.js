@@ -432,8 +432,8 @@ function sendWindowsToast(request) {
 //#endregion
 //#region lib/types/notifier.js
 /**
-* 桌面通知提供方：Desktop 优先 Electron Notification（点一下能唤回窗口），
-* 否则按平台走 Windows Toast 或 macOS osascript。
+* 桌面通知提供方：任务结束 / 提问时 Desktop 优先 Electron Notification（点一下能唤回窗口）；
+* Windows 上批准工具一律走带按钮的卡片，Web 与 Desktop 相同。
 */
 var __rewriteRelativeImportExtension = function(path, preserveJsx) {
 	if (typeof path === "string" && /^\.\.?\//.test(path)) return path.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m, tsx, d, ext, cm) {
@@ -467,11 +467,11 @@ async function isDesktopWindowFocused() {
 /** Host 桌面通知提供方：Electron，否则 Windows / macOS 系统通知。 */
 var HostDesktopNotifier = class {
 	/**
-	* 弹出一条通知：先试 Electron，再按平台回退。
-	* Windows 审批等待时带按钮；Electron / macOS 忽略按钮，调用方视为未做决定。
+	* 弹出一条通知：Windows 批准走带按钮的卡片；其余先试 Electron，再按平台回退。
 	* @param request - 标题、正文、声音，以及可选的审批等待。
 	*/
 	async notify(request) {
+		if (request.approvalActions === true && process.platform === "win32") return sendWindowsToast(request);
 		const electronResult = await this.notifyElectron(request);
 		if (electronResult !== void 0) return electronResult;
 		if (process.platform === "win32") return sendWindowsToast(request);
@@ -520,7 +520,6 @@ var HostDesktopNotifier = class {
 * Host 半部：桌面通知能力 = 接口（DesktopNotifier）+ Electron/Windows/macOS
 * 提供方 + 三类消费者（任务结束、权限审批、向用户提问）。
 * Web 与 Desktop 共用同一条 Host 组合，无需浏览器 Notification 权限。
-* （样式复测：新样式卡片，点任意按钮验证。）
 * @module @sjhmars/task-notify
 */
 var __runInitializers = function(thisArg, initializers, value) {

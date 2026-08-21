@@ -17,8 +17,8 @@ export interface NotifyRequest {
   /** 是否播放系统提示音。 */
   readonly sound?: boolean
   /**
-   * 为 true 时 Windows Toast 带「拒绝 / 允许一次」，并等到点击、关闭或超时。
-   * Electron / macOS 忽略此项，通知仍只提醒。
+   * 为 true 时 Windows 弹出带「拒绝 / 允许一次」的卡片，并等到点击、关闭或超时。
+   * Web 与 Desktop 在 Windows 上相同；macOS / Linux 忽略此项，通知仍只提醒。
    */
   readonly approvalActions?: boolean
   /** 审批气泡最长等待毫秒数。未设时由 Windows 通道默认 10000。 */
