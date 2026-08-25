@@ -1,0 +1,4 @@
+# Adds thinking intensity presets to custom llm-pi-ai model rows.
+- insert:
+    - id: pi-ai-thinking
+      name: '@sjhmars/pi-ai-thinking'

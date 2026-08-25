@@ -26,6 +26,8 @@ dsh-plugins/
 |---|---|---|
 | [`@sjhmars/editor-launcher`](https://www.npmjs.com/package/@sjhmars/editor-launcher) · [源码](plugins/editor-launcher) | 在 Session 头部加编辑器选择器：列出本机已安装编辑器（含注册表检测，支持非 C 盘安装的 JetBrains / Visual Studio），选中记为默认；点击会话中模型 Read/Edit/Write 或正文提及的文件路径，用所选编辑器打开（Web 端）。 | `dsh plugin --profile web add @sjhmars/editor-launcher` |
 | [`@sjhmars/task-notify`](https://www.npmjs.com/package/@sjhmars/task-notify) · [源码](plugins/task-notify) | Agent 任务结束、工具要你批准、或向你提问时弹出桌面通知。Windows 上 Web 和 Desktop 的批准都是右下角卡片（允许一次 / 拒绝 / 关闭后出黄框）。 | `dsh plugin --profile web add @sjhmars/task-notify` |
+| [`@sjhmars/happy-bridge`](https://www.npmjs.com/package/@sjhmars/happy-bridge) · [源码](plugins/happy-bridge) | 电脑照常跑 dsh web/桌面；扫码后用手机 Happy App 遥控同一套会话（发消息、看回复、点批准）。 | `dsh plugin --profile web add @sjhmars/happy-bridge` |
+| [`@sjhmars/pi-ai-thinking`](https://www.npmjs.com/package/@sjhmars/pi-ai-thinking) · [源码](plugins/pi-ai-thinking) | 为使用 OpenAI Completions、Responses 或 Anthropic Messages 协议的自定义模型自动补齐 `off/low/high/max` 思考强度；仍在原模型选择器中切换，不用手改 `settings.yaml`。 | `dsh plugin --profile web add @sjhmars/pi-ai-thinking` |
 
 ### 安装说明 / Install
 
@@ -34,12 +36,15 @@ dsh-plugins/
 ```sh
 dsh plugin --profile web add @sjhmars/editor-launcher
 dsh plugin --profile web add @sjhmars/task-notify
+dsh plugin --profile web add @sjhmars/happy-bridge
+dsh plugin --profile web add @sjhmars/pi-ai-thinking
 ```
 
 Desktop 是独立 profile，正式安装同样用包名：
 
 ```sh
 dsh plugin --profile desktop add @sjhmars/task-notify
+dsh plugin --profile desktop add @sjhmars/pi-ai-thinking
 ```
 
 不要把本仓库插件目录 `dsh plugin add` / pnpm link 进 profile。本地边改边测用客户端 overlay（绝对路径），见各插件 README。

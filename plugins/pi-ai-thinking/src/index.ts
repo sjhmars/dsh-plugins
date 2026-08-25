@@ -1,0 +1,92 @@
+/**
+ * Automatically exposes thinking intensity controls for custom llm-pi-ai models
+ * without modifying DeepSeek Harness or storing credentials.
+ *
+ * @module @sjhmars/pi-ai-thinking
+ */
+
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings/types'
+import { buildThinkingOps } from './patch.ts'
+
+const PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
+
+/** Plugin configuration. */
+export interface Config {
+  /** Replace existing model reasoning maps instead of preserving them. */
+  force: boolean
+}
+
+/** Validate plugin configuration and provide its safe default. */
+export const Config: Schema<Config> = Schema.object({
+  force: Schema.boolean().default(false),
+})
+
+/** Cordis plugin name. */
+export const name = 'pi-ai-thinking'
+
+/** The plugin reads and updates the registered settings service. */
+export const inject = ['settings']
+
+/**
+ * Add thinking capability declarations to the current llm-pi-ai user section.
+ * A retry handles a user save that committed after this plugin read its revision.
+ * @param ctx - Host context providing the settings service.
+ * @param config - Validated plugin configuration.
+ * @param retries - Remaining stale-revision retries.
+ */
+async function reconcile(ctx: Context, config: Config, retries: number): Promise<void> {
+  const descriptor = ctx.settings.describe().find(candidate => candidate.ns === PI_AI_NAMESPACE)
+  if (descriptor?.user === undefined) return
+
+  const ops = buildThinkingOps(descriptor.user, config.force)
+  if (ops.length === 0) return
+
+  try {
+    await ctx.settings.mutate(PI_AI_NAMESPACE, ops, descriptor.revision)
+  } catch (error) {
+    if (error instanceof SettingsConflictError && retries > 0) {
+      await reconcile(ctx, config, retries - 1)
+      return
+    }
+    throw error
+  }
+}
+
+/** Log an automatic configuration failure without preventing Harness startup. */
+function reportFailure(ctx: Context, error: unknown): void {
+  ctx.logger.warn('pi-ai-thinking: 自动补齐模型思考档位失败')
+  ctx.logger.warn(error)
+}
+
+/**
+ * Reconcile custom models at startup and after their raw user section changes.
+ * @param ctx - Host context providing settings events.
+ * @param config - Validated plugin configuration.
+ */
+export function apply(ctx: Context, config: Config): void {
+  let active = true
+  let tail = Promise.resolve()
+
+  const enqueue = (): void => {
+    tail = tail
+      .then(() => active ? reconcile(ctx, config, 1) : undefined)
+      .catch((error: unknown) => {
+        reportFailure(ctx, error)
+      })
+  }
+
+  ctx.effect(() => () => {
+    active = false
+  }, 'pi-ai-thinking: stop settings reconciliation')
+
+  ctx.on('settings/document-updated', (namespace) => {
+    if (namespace === PI_AI_NAMESPACE) enqueue()
+  })
+  enqueue()
+}
+
+export { buildThinkingOps, reasoningEffortsFor } from './patch.ts'
+export type { CustomModel, CustomProvider, PiAiThinkingProtocol, PiAiUserSettings } from './types.ts'
