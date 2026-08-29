@@ -1,0 +1,6 @@
+# The @sjhmars/happy-bridge bundle layer: inserts the plugin row that the
+# profile composes. Applied when a profile lists this package in its
+# `dsh.profile.bundles` (which `dsh plugin add` maintains automatically).
+- insert:
+    - id: happy-bridge
+      name: '@sjhmars/happy-bridge'

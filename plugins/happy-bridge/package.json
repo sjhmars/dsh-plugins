@@ -1,0 +1,93 @@
+{
+  "name": "@sjhmars/happy-bridge",
+  "version": "0.1.0",
+  "description": "Pair an already-running dsh web/desktop client with Happy App so the phone remote-controls the same harness sessions",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
+    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsdown -c tsdown.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "disclosure": {
+    "cloud": true,
+    "network": ["api.cluster-fluster.com"],
+    "offlineMode": false,
+    "apiKeys": [],
+    "permissions": ["file-system:credentials", "network:happy-relay"],
+    "jurisdiction": [],
+    "retention": "credentials"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sjhmars/dsh-plugins.git",
+    "directory": "plugins/happy-bridge"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.1.0-rc.5",
+    "@deepseek-ai/schemastery": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-attachment": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-commands": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-permission-presets": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-skill": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-user-approval": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-user-questions": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.5",
+    "react": "^18.2.0"
+  },
+  "dependencies": {
+    "@paralleldrive/cuid2": "^2.2.2",
+    "@slopus/happy-wire": "^0.1.0",
+    "qrcode": "^1.5.4",
+    "socket.io-client": "^4.8.1",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "~18.3.31",
+    "lightningcss": "^1.32.0",
+    "react": "^18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ],
+      "platform": "web"
+    }
+  }
+}

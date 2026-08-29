@@ -1,0 +1,6 @@
+# 只挂 Host 半边，设置页不会出现 Happy 卡片。要看二维码请把插件按包名装进 profile：
+#   pnpm dsh plugin --profile web add H:\dsh-plugin\plugins\happy-bridge
+# Node ESM 在 Windows 上不能写 H:/...（会被当成协议 h:），必须是 file:///H:/...
+- insert:
+    - id: happy-bridge
+      name: 'file:///H:/dsh-plugin/plugins/happy-bridge/lib/index.js'

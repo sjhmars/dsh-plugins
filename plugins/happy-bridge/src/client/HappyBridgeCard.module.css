@@ -1,0 +1,116 @@
+/* Happy remote settings card. Uses the same CSS tokens as in-tree plugin cards. */
+
+.card {
+  list-style: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.header {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.headText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.description {
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chevron {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.body {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  margin: 0 16px;
+  padding: 12px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status {
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.error {
+  font-size: 13px;
+  color: var(--dsw-alias-danger, #c44);
+}
+
+.qr {
+  width: 180px;
+  height: 180px;
+  align-self: center;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button {
+  appearance: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.label {
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.select,
+.checkbox {
+  font: inherit;
+  font-size: 13px;
+}
+
+.select {
+  min-width: 8em;
+}
+
+.select:disabled,
+.checkbox:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

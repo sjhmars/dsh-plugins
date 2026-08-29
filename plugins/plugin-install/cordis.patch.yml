@@ -1,0 +1,6 @@
+# @sjhmars/plugin-install 组合层：插入 Host 行。profile 由桌面补丁写成 desktop。
+- insert:
+    - id: plugin-install
+      name: '@sjhmars/plugin-install'
+      config:
+        profile: web
