@@ -2481,6 +2481,22 @@ var HappySessionSocket = class {
 		this.ensureAliveTimer();
 	}
 	/**
+	* Assert the session state with a reliable (non-volatile) emit: state
+	* transitions must not ride the droppable heartbeat path, or the App
+	* flickers between online and thinking until the next 2s tick.
+	* @param thinking - `true` while the Host turn is still executing.
+	*/
+	keepAliveNow(thinking) {
+		this.thinking = thinking;
+		this.socket?.emit("session-alive", {
+			sid: this.happySessionId,
+			time: Date.now(),
+			thinking: this.thinking,
+			mode: "remote"
+		});
+		this.ensureAliveTimer();
+	}
+	/**
 	* Restart session-alive if the timer was cleared. Happy lists the row as
 	* offline once heartbeats stop; opening the chat on the phone does not
 	* start them again.
@@ -2532,17 +2548,23 @@ var HappySessionSocket = class {
 	}
 	/**
 	* Encrypt and push agentState (permission requests).
+	* Retries on version-mismatch the same way metadata does; a dropped bump
+	* leaves the App with empty `requests` and no Yes/No card.
 	* @param agentState - plaintext agentState.
 	*/
 	updateState(agentState) {
 		const socket = this.socket;
 		if (socket === void 0) return;
+		this.emitState(socket, agentState, this.agentStateVersion, 0);
+	}
+	emitState(socket, agentState, expected, attempt) {
 		socket.emit("update-state", {
 			sid: this.happySessionId,
 			agentState: encryptB64(this.crypto, agentState),
-			expectedVersion: this.agentStateVersion
+			expectedVersion: expected
 		}, (answer) => {
 			if (typeof answer?.version === "number") this.agentStateVersion = answer.version;
+			if (answer?.result === "version-mismatch" && attempt < 3 && typeof answer.version === "number") this.emitState(socket, agentState, answer.version, attempt + 1);
 		});
 	}
 	sendAgent(ev, time) {
@@ -2847,6 +2869,10 @@ var HappyBridge = class {
 			if (status === "idle") this.drainNewEvents(link, agent);
 		}, { global: true });
 		this.ctx.on("session/event", (session, event) => {
+			if (event.type === "model/selection") {
+				this.onHostModelSelected(String(session.header.id), event.data);
+				return;
+			}
 			const link = this.links.get(session.header.id);
 			if (link !== void 0) {
 				this.onSessionEvent(link, event);
@@ -2857,15 +2883,6 @@ var HappyBridge = class {
 			this.ensureMirror(session.header.id).catch((error) => this.log(`镜像会话失败：${String(error)}`));
 		}, { global: true });
 		this.ctx.on("approval/request", (req, next) => this.onApproval(req, next), { prepend: true });
-		this.ctx.inject(["apiProxy"], (inner) => {
-			const proxy = inner.get("apiProxy");
-			if (proxy === void 0) return;
-			const original = proxy.sessions.selectModel;
-			proxy.sessions.selectModel = (request) => this.afterHostSelect(request, original.call(proxy.sessions, request));
-			inner.effect(() => () => {
-				proxy.sessions.selectModel = original;
-			}, "happy-bridge: restore sessions.selectModel");
-		});
 		this.ctx.inject(["userQuestions"], (inner) => {
 			const questions = inner.userQuestions;
 			const original = questions.ask;
@@ -3719,27 +3736,20 @@ var HappyBridge = class {
 		this.syncHostSelection(agent, next);
 	}
 	/**
-	* Write the web picker's Host selection (`session.selectModel`) so the
-	* composer model seat reloads without a click on the computer.
+	* Write the web picker's Host selection (`sessionController.selectModel`) so
+	* the composer model seat reloads without a click on the computer.
 	*/
 	async syncHostSelection(agent, next) {
-		const proxy = this.ctx.get("apiProxy");
-		if (proxy === void 0) return;
+		const controller = this.ctx.get("sessionController");
+		if (controller === void 0) return;
 		this.hostSelectFromPhone += 1;
 		try {
-			const response = await proxy.sessions.selectModel({
-				rpcId: `happy-model-${String(Date.now())}`,
-				payload: {
-					sessionId: agent.id,
-					provider: next.provider,
-					model: next.model,
-					...next.reasoningEffort === void 0 ? {} : { reasoningEffort: next.reasoningEffort }
-				}
+			await controller.selectModel({
+				sessionId: agent.id,
+				provider: next.provider,
+				model: next.model,
+				...next.reasoningEffort === void 0 ? {} : { reasoningEffort: next.reasoningEffort }
 			});
-			if (!response.result.ok) {
-				this.log(`电脑模型栏未同步：${response.result.error.message}`);
-				return;
-			}
 			const link = this.links.get(agent.id);
 			if (link !== void 0 && !link.parked) this.pushMetadata(link);
 		} catch (error) {
@@ -3752,26 +3762,21 @@ var HappyBridge = class {
 	* After the web picker (or any Host caller) lands a selection, publish it
 	* to Happy. Phone-originated calls set {@link hostSelectFromPhone} and push themselves.
 	*/
-	async afterHostSelect(request, pending) {
-		const response = await pending;
-		if (this.hostSelectFromPhone) return response;
-		if (!response.result.ok) return response;
-		const { sessionId, provider, model, reasoningEffort } = request.payload;
-		const id = String(sessionId);
+	onHostModelSelected(sessionId, selection) {
+		if (this.hostSelectFromPhone) return;
 		const next = {
-			provider,
-			model,
-			...reasoningEffort === void 0 ? {} : { reasoningEffort: ReasoningEffortId(reasoningEffort) }
+			provider: selection.provider,
+			model: selection.model,
+			...selection.reasoningEffort === void 0 ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }
 		};
-		this.models.set(id, next);
-		const link = this.links.get(id);
+		this.models.set(sessionId, next);
+		const link = this.links.get(sessionId);
 		const agent = link?.agent;
 		if (agent !== void 0) {
-			const selection = this.selections.get(agent);
-			if (selection !== void 0) selection.current = next;
+			const current = this.selections.get(agent);
+			if (current !== void 0) current.current = next;
 		}
 		if (link !== void 0 && !link.parked) this.pushMetadata(link);
-		return response;
 	}
 	/**
 	* Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
@@ -3964,27 +3969,41 @@ var HappyBridge = class {
 		if (link.alwaysAllow.has(req.toolName)) return "allowed-once";
 		if (!grantAtLeast(this.config.remoteGrant, "approve")) return next();
 		const id = req.callId;
-		this.startTool(link, id, req.toolName, req.reason === void 0 ? {} : { reason: req.reason });
+		const controller = new AbortController();
+		req.signal = req.signal === void 0 ? controller.signal : AbortSignal.any([req.signal, controller.signal]);
+		const args = req.reason === void 0 ? {} : { reason: req.reason };
+		const card = happyTool(req.toolName, args);
+		let resolvePhone = () => {};
 		const phone = new Promise((resolve) => {
-			link.pendingHuman = {
-				kind: "approval",
-				id,
-				toolName: req.toolName,
-				resolve
-			};
+			resolvePhone = resolve;
 		});
+		link.pendingHuman = {
+			kind: "approval",
+			id,
+			toolName: req.toolName,
+			happyName: card.name,
+			arguments: card.args,
+			resolve: resolvePhone
+		};
 		this.pushRequests(link);
+		link.socket.keepAliveNow(true);
+		const web = next().then((outcome) => ({
+			src: "web",
+			outcome
+		}), () => ({
+			src: "web",
+			outcome: "cancelled"
+		}));
 		const winner = await Promise.race([phone.then((outcome) => ({
 			src: "phone",
 			outcome
-		})), next().then((outcome) => ({
-			src: "web",
-			outcome
-		}))]);
+		})), web]);
+		if (winner.src === "phone") controller.abort();
 		if (winner.src === "web" && link.pendingHuman?.kind === "approval" && link.pendingHuman.id === id) {
 			delete link.pendingHuman;
 			this.clearRequest(link, id, winner.outcome === "allowed-once" ? "approved" : "canceled");
 		}
+		if (link.agent?.status === "running") link.socket.keepAliveNow(true);
 		return winner.outcome;
 	}
 	onAsk(questions, original, request) {
@@ -4112,8 +4131,8 @@ var HappyBridge = class {
 		const requests = {};
 		if (pending !== void 0) {
 			if (pending.kind === "approval") requests[pending.id] = {
-				tool: pending.toolName,
-				arguments: {},
+				tool: pending.happyName,
+				arguments: pending.arguments,
 				createdAt: Date.now()
 			};
 			else if (pending.kind === "plan-review") requests[pending.id] = {

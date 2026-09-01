@@ -169,15 +169,15 @@ export declare class HappyBridge {
     /** Keep the last Host pick so Happy metadata can echo the web composer. */
     private rememberModel;
     /**
-     * Write the web picker's Host selection (`session.selectModel`) so the
-     * composer model seat reloads without a click on the computer.
+     * Write the web picker's Host selection (`sessionController.selectModel`) so
+     * the composer model seat reloads without a click on the computer.
      */
     private syncHostSelection;
     /**
      * After the web picker (or any Host caller) lands a selection, publish it
      * to Happy. Phone-originated calls set {@link hostSelectFromPhone} and push themselves.
      */
-    private afterHostSelect;
+    private onHostModelSelected;
     /**
      * Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
      * before the first LLM request, matching the effort Happy metadata advertises.

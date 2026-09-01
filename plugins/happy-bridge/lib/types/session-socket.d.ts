@@ -117,6 +117,13 @@ export declare class HappySessionSocket {
      */
     keepAlive(thinking: boolean): void;
     /**
+     * Assert the session state with a reliable (non-volatile) emit: state
+     * transitions must not ride the droppable heartbeat path, or the App
+     * flickers between online and thinking until the next 2s tick.
+     * @param thinking - `true` while the Host turn is still executing.
+     */
+    keepAliveNow(thinking: boolean): void;
+    /**
      * Restart session-alive if the timer was cleared. Happy lists the row as
      * offline once heartbeats stop; opening the chat on the phone does not
      * start them again.
@@ -134,9 +141,12 @@ export declare class HappySessionSocket {
     private emitMetadata;
     /**
      * Encrypt and push agentState (permission requests).
+     * Retries on version-mismatch the same way metadata does; a dropped bump
+     * leaves the App with empty `requests` and no Yes/No card.
      * @param agentState - plaintext agentState.
      */
     updateState(agentState: unknown): void;
+    private emitState;
     private sendAgent;
     private emitEnvelope;
     private onMetadataUpdate;

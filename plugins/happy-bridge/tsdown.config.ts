@@ -11,7 +11,7 @@ import type { UserConfig } from 'tsdown'
 const PLUGIN_ID = '@sjhmars/happy-bridge'
 
 /** Wire/type layers the client bundle may inline (no shared runtime identity). */
-const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand)(\/|$)/
+const INLINE_SAFE = /^@deepseek-ai\/dsh-(session|llm|tools|brand)(\/|$)/
 
 /** Vendored framework libraries with no cross-plugin identity to share. */
 const VENDORED_LIBRARY = /^@deepseek-ai\/(cosmokit|schemastery)(\/|$)/

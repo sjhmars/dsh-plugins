@@ -82,7 +82,39 @@ let PluginInstallService = (() => {
                     stderr: 'plugin-install: 只接受 npm 包名（例如 @sjhmars/task-notify）',
                 };
             }
-            return addProfilePlugin(this.profile, name, resolveInstallAnchor());
+            const result = addProfilePlugin(this.profile, name, resolveInstallAnchor());
+            if (!result.ok)
+                return result;
+            return this.mountInstalled(name, result);
+        }
+        /**
+         * Hot-mount the freshly installed package into the running tree, so a
+         * first-time install takes effect without a client restart. Durability
+         * across restarts is the profile manifest's job (already written); the
+         * loader mount is process-local and self-healing — a failed or partial
+         * mount only downgrades to "effective after restart". Mounted rows run
+         * with the plugin's default config; a bundle patch carrying row config or
+         * overriding other rows reaches full fidelity at the next restart.
+         * @param name - the installed package name.
+         * @param result - the completed install result.
+         * @returns the result with the live-mount outcome appended.
+         */
+        async mountInstalled(name, result) {
+            try {
+                await this.ctx.loader.create({ name });
+                return {
+                    ...result,
+                    stdout: `${result.stdout}\nplugin-install: ${name} 已热挂载，无需重启；界面部分刷新页面即可。`
+                        .split('\n').filter(part => part.length > 0).join('\n'),
+                };
+            }
+            catch (error) {
+                return {
+                    ...result,
+                    stderr: `${result.stderr}\nplugin-install: 安装成功，但热挂载失败，重启后生效：${error instanceof Error ? error.message : String(error)}`
+                        .split('\n').filter(part => part.length > 0).join('\n'),
+                };
+            }
         }
     };
 })();

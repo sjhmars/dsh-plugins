@@ -1,6 +1,5 @@
 /** 浏览器半：设置 → 插件 的安装页。 */
 
-import type { ConnectionHandle, RpcResult } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -14,25 +13,33 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'locale', 'connection']
+export const inject = ['slots', 'locale']
+
+/**
+ * One same-origin GET to the plugin's exact Fetch routes (the seam allows
+ * GET/HEAD only; parameters ride the query string). The physical carrier
+ * (web route lane or the desktop IPC bridge) owns trust policy.
+ * @param path - route path below /api.
+ * @param query - query parameters.
+ * @returns the parsed JSON response.
+ */
+async function get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+  const url = Object.keys(query).length === 0 ? path : `${path}?${new URLSearchParams(query).toString()}`
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`plugin-install: HTTP ${String(response.status)}`)
+  return await response.json() as T
+}
 
 /**
  * 注册安装标签页。
  * @param ctx - 浏览器插件上下文。
  */
 export function apply(ctx: ClientContext): void {
-  const connection = ctx.get('connection') as ConnectionHandle
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'plugin-install: 文案')
 
   const injected = (): PluginInstallTabInjected => ({
-    target: async () => {
-      const result = await connection.rpc.call('/api', 'pluginInstall/target', { args: {} })
-      return unwrap<{ profile: 'web' | 'desktop' }>(result)
-    },
-    install: async (packageName) => {
-      const result = await connection.rpc.call('/api', 'pluginInstall/install', { args: { packageName } })
-      return unwrap<InstallResult>(result)
-    },
+    target: () => get<{ profile: 'web' | 'desktop' }>('/api/pluginInstall/target'),
+    install: (packageName) => get<InstallResult>('/api/pluginInstall/install', { package: packageName }),
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
@@ -43,9 +50,4 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: injected,
   }, PluginInstallTab))
-}
-
-function unwrap<T>(result: RpcResult<unknown>): T {
-  if (result.ok) return result.value as T
-  throw new Error(result.error.message)
 }

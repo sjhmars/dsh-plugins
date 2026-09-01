@@ -267,6 +267,10 @@ export class HappyBridge {
                 this.drainNewEvents(link, agent);
         }, { global: true });
         this.ctx.on('session/event', (session, event) => {
+            if (event.type === 'model/selection') {
+                this.onHostModelSelected(String(session.header.id), event.data);
+                return;
+            }
             const link = this.links.get(session.header.id);
             if (link !== undefined) {
                 this.onSessionEvent(link, event);
@@ -279,16 +283,6 @@ export class HappyBridge {
             void this.ensureMirror(session.header.id).catch(error => this.log(`镜像会话失败：${String(error)}`));
         }, { global: true });
         this.ctx.on('approval/request', (req, next) => this.onApproval(req, next), { prepend: true });
-        this.ctx.inject(['apiProxy'], (inner) => {
-            const proxy = inner.get('apiProxy');
-            if (proxy === undefined)
-                return;
-            const original = proxy.sessions.selectModel;
-            proxy.sessions.selectModel = request => this.afterHostSelect(request, original.call(proxy.sessions, request));
-            inner.effect(() => () => {
-                proxy.sessions.selectModel = original;
-            }, 'happy-bridge: restore sessions.selectModel');
-        });
         this.ctx.inject(['userQuestions'], (inner) => {
             const questions = inner.userQuestions;
             const original = questions.ask;
@@ -1210,28 +1204,21 @@ export class HappyBridge {
         void this.syncHostSelection(agent, next);
     }
     /**
-     * Write the web picker's Host selection (`session.selectModel`) so the
-     * composer model seat reloads without a click on the computer.
+     * Write the web picker's Host selection (`sessionController.selectModel`) so
+     * the composer model seat reloads without a click on the computer.
      */
     async syncHostSelection(agent, next) {
-        const proxy = this.ctx.get('apiProxy');
-        if (proxy === undefined)
+        const controller = this.ctx.get('sessionController');
+        if (controller === undefined)
             return;
         this.hostSelectFromPhone += 1;
         try {
-            const response = await proxy.sessions.selectModel({
-                rpcId: `happy-model-${String(Date.now())}`,
-                payload: {
-                    sessionId: agent.id,
-                    provider: next.provider,
-                    model: next.model,
-                    ...(next.reasoningEffort === undefined ? {} : { reasoningEffort: next.reasoningEffort }),
-                },
+            await controller.selectModel({
+                sessionId: agent.id,
+                provider: next.provider,
+                model: next.model,
+                ...(next.reasoningEffort === undefined ? {} : { reasoningEffort: next.reasoningEffort }),
             });
-            if (!response.result.ok) {
-                this.log(`电脑模型栏未同步：${response.result.error.message}`);
-                return;
-            }
             const link = this.links.get(agent.id);
             if (link !== undefined && !link.parked)
                 void this.pushMetadata(link);
@@ -1247,30 +1234,24 @@ export class HappyBridge {
      * After the web picker (or any Host caller) lands a selection, publish it
      * to Happy. Phone-originated calls set {@link hostSelectFromPhone} and push themselves.
      */
-    async afterHostSelect(request, pending) {
-        const response = await pending;
+    onHostModelSelected(sessionId, selection) {
         if (this.hostSelectFromPhone)
-            return response;
-        if (!response.result.ok)
-            return response;
-        const { sessionId, provider, model, reasoningEffort } = request.payload;
-        const id = String(sessionId);
+            return;
         const next = {
-            provider,
-            model,
-            ...(reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(reasoningEffort) }),
+            provider: selection.provider,
+            model: selection.model,
+            ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }),
         };
-        this.models.set(id, next);
-        const link = this.links.get(id);
+        this.models.set(sessionId, next);
+        const link = this.links.get(sessionId);
         const agent = link?.agent;
         if (agent !== undefined) {
-            const selection = this.selections.get(agent);
-            if (selection !== undefined)
-                selection.current = next;
+            const current = this.selections.get(agent);
+            if (current !== undefined)
+                current.current = next;
         }
         if (link !== undefined && !link.parked)
             void this.pushMetadata(link);
-        return response;
     }
     /**
      * Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
@@ -1491,19 +1472,50 @@ export class HappyBridge {
         if (!grantAtLeast(this.config.remoteGrant, 'approve'))
             return next();
         const id = req.callId;
-        this.startTool(link, id, req.toolName, req.reason === undefined ? {} : { reason: req.reason });
+        // 手机批准后给网页那一份发 cancel:进 next() 前把请求上的 signal 换成
+        // 「原工具信号 + 专用 controller」的组合信号。手机先点时 controller.abort()
+        // → Host 看到组合信号被掐 → 向网页发 cancel 关掉黄框;工具持有的原信号
+        // 引用不受影响,已批准的命令照常执行。网页先点则不 abort,不误伤网页结果。
+        const controller = new AbortController();
+        const combined = req.signal === undefined
+            ? controller.signal
+            : AbortSignal.any([req.signal, controller.signal]);
+        req.signal = combined;
+        // Happy 的允许/拒绝按钮来自 agentState.requests 占位卡,不是 tool-call-start。
+        // 审批时先开工具卡,手机会当成已经在执行,确认框就不弹了。
+        const args = req.reason === undefined ? {} : { reason: req.reason };
+        const card = happyTool(req.toolName, args);
+        let resolvePhone = () => { };
         const phone = new Promise((resolve) => {
-            link.pendingHuman = { kind: 'approval', id, toolName: req.toolName, resolve };
+            resolvePhone = resolve;
         });
+        link.pendingHuman = {
+            kind: 'approval',
+            id,
+            toolName: req.toolName,
+            happyName: card.name,
+            arguments: card.args,
+            resolve: resolvePhone,
+        };
         this.pushRequests(link);
+        link.socket.keepAliveNow(true);
+        // controller.abort() 会取消网页那一环,next() 的拒绝必须接住,
+        // 避免未处理的 Promise 报错。
+        const web = next().then(outcome => ({ src: 'web', outcome }), () => ({ src: 'web', outcome: 'cancelled' }));
         const winner = await Promise.race([
             phone.then(outcome => ({ src: 'phone', outcome })),
-            next().then(outcome => ({ src: 'web', outcome })),
+            web,
         ]);
+        if (winner.src === 'phone')
+            controller.abort();
         if (winner.src === 'web' && link.pendingHuman?.kind === 'approval' && link.pendingHuman.id === id) {
             delete link.pendingHuman;
             this.clearRequest(link, id, winner.outcome === 'allowed-once' ? 'approved' : 'canceled');
         }
+        // 权限结束、回合还在跑:立刻用可靠通道再声明一次 thinking,
+        // 不等 2 秒的 volatile 心跳碰运气(否则在线/思考来回跳)。
+        if (link.agent?.status === 'running')
+            link.socket.keepAliveNow(true);
         return winner.outcome;
     }
     onAsk(questions, original, request) {
@@ -1633,7 +1645,11 @@ export class HappyBridge {
         const requests = {};
         if (pending !== undefined) {
             if (pending.kind === 'approval') {
-                requests[pending.id] = { tool: pending.toolName, arguments: {}, createdAt: Date.now() };
+                requests[pending.id] = {
+                    tool: pending.happyName,
+                    arguments: pending.arguments,
+                    createdAt: Date.now(),
+                };
             }
             else if (pending.kind === 'plan-review') {
                 requests[pending.id] = { tool: 'exit_plan_mode', arguments: {}, createdAt: Date.now() };

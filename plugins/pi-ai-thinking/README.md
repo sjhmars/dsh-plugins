@@ -1,5 +1,7 @@
 # @sjhmars/pi-ai-thinking
 
+> **Model configuration helper for custom pi-ai providers.** Automatically adds a thinking-intensity selector to user-defined `llm-pi-ai` models created on the Harness settings page — reasoning-effort presets `off` / `low` / `high` / `max` for `openai-completions`, `openai-responses` and `anthropic-messages` protocols, with no harness source modification and no manual `settings.yaml` editing. "Thinking" here means the model's reasoning effort, not a UI animation.
+
 为原设置页创建的自定义模型自动添加思考强度选择器，不修改 DeepSeek Harness 源码，也不要求手改 `settings.yaml`。
 
 插件在启动时和自定义模型保存后检查 `llm-pi-ai` 的 user 配置。只要 provider 有 `models` 列表且协议为 `openai-completions`、`openai-responses` 或 `anthropic-messages`，每个模型都会获得 `off`、`low`、`high`、`max` 四档。

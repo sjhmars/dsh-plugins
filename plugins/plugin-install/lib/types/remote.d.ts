@@ -2,6 +2,12 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type { Config, InstallResult } from './types.ts';
+declare module '@deepseek-ai/cordis' {
+    interface Context {
+        /** Settings-tab plugin installer Remote. */
+        pluginInstall: PluginInstallService;
+    }
+}
 /**
  * 浏览器安装页调用的 Host RPC。
  */
@@ -25,5 +31,18 @@ export declare class PluginInstallService extends TypertRemoteService {
      * @returns 安装结果。
      */
     install(packageName: string): Promise<InstallResult>;
+    /**
+     * Hot-mount the freshly installed package into the running tree, so a
+     * first-time install takes effect without a client restart. Durability
+     * across restarts is the profile manifest's job (already written); the
+     * loader mount is process-local and self-healing — a failed or partial
+     * mount only downgrades to "effective after restart". Mounted rows run
+     * with the plugin's default config; a bundle patch carrying row config or
+     * overriding other rows reaches full fidelity at the next restart.
+     * @param name - the installed package name.
+     * @param result - the completed install result.
+     * @returns the result with the live-mount outcome appended.
+     */
+    private mountInstalled;
 }
 //# sourceMappingURL=remote.d.ts.map

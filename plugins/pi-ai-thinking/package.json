@@ -1,7 +1,21 @@
 {
   "name": "@sjhmars/pi-ai-thinking",
   "version": "0.1.0",
-  "description": "Add thinking intensity presets to custom llm-pi-ai models",
+  "description": "Model configuration helper: automatically adds thinking-intensity (reasoning effort) presets off/low/high/max to custom llm-pi-ai models defined on the Harness settings page",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh",
+    "pi-ai",
+    "llm",
+    "model-config",
+    "model-configuration",
+    "custom-models",
+    "reasoning-effort",
+    "thinking-intensity",
+    "provider",
+    "presets"
+  ],
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

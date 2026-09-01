@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
 import Schema from "@deepseek-ai/schemastery";
-import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PROFILE_TEMPLATES, initProfile, readProfileManifest, resolveBundleDir, resolveProfileDir, writeProfileManifest } from "@deepseek-ai/dsh-app-boot";
 //#region lib/types/add.js
 /**
@@ -22,29 +22,150 @@ function isInstallProfile(profile) {
 	return INSTALL_PROFILES.includes(profile);
 }
 const LOG = "plugin-install";
+/** 本安装器的 npm 包名。设置页更新自己时不热替换，避免处理请求时卸掉当前实例。 */
+const INSTALLER_PACKAGE = "@sjhmars/plugin-install";
 /**
-* 只接受注册表包名（含 scope）。拒绝路径、协议前缀、版本后缀与空白。
-* @param raw - 输入框原文。
-* @returns 规范化包名；非法时为 undefined。
+* Loader 行是否属于该 npm 包：启动时的包名行、旧式 `包名?hot=`、以及
+* `file://…/node_modules/<包名>/…?hot=` 热挂行。
+* @param entryName - Loader `options.name`。
+* @param packageName - 不含版本后缀的 npm 包名。
+* @returns 是否应在热替换前卸掉。
 */
-function parseNpmPackageName(raw) {
-	const name = raw.trim();
-	if (name.length === 0) return void 0;
-	if (name.length > 214) return void 0;
-	if (/[\\\s]/.test(name)) return void 0;
-	if (/^(?:file|link|github|git\+|workspace|npm|http|https):/i.test(name)) return void 0;
-	if (name.startsWith(".") || name.startsWith("_")) return void 0;
-	if (name.includes("@") && !name.startsWith("@")) return void 0;
-	if (!/^(?:@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/.test(name)) return void 0;
-	return name;
+function entryBelongsToPackage(entryName, packageName) {
+	if (entryName === void 0 || packageName.length === 0) return false;
+	if (entryName === packageName || entryName.startsWith(`${packageName}?hot=`)) return true;
+	return (entryName.split("?")[0] ?? entryName).replaceAll("\\", "/").includes(`/node_modules/${packageName}/`);
 }
 /**
-* 定位本包依赖的 pnpm CLI（`.cjs`，不必走 Windows `.cmd`）。
-* @param from - 解析起点，默认本模块。
-* @returns pnpm 入口文件绝对路径。
+* 从 profile 的 node_modules 解析刚装好的包入口 URL（不用已加载模块的 resolve 缓存）。
+* @param profile - `web` 或 `desktop`。
+* @param packageName - 不含版本后缀的 npm 包名。
+* @returns `file://` 入口 URL。
 */
-function resolvePnpmCli(from = import.meta.url) {
-	return createRequire(from).resolve("pnpm/bin/pnpm.cjs");
+function resolveInstalledPackageUrl(profile, packageName) {
+	const require = createRequire(join(resolveProfileDir(profile), "package.json"));
+	return pathToFileURL(require.resolve(packageName)).href;
+}
+/**
+* 只接受注册表包名(含 scope,可带可选 `@version` 后缀)。拒绝路径、协议
+* 前缀与空白。
+* @param raw - 输入框原文。
+* @returns 规范化的包名与可选版本;非法时为 undefined。
+*/
+function parseNpmPackageName(raw) {
+	const input = raw.trim();
+	if (input.length === 0 || input.length > 260) return void 0;
+	if (/[\\\s]/.test(input)) return void 0;
+	if (/^(?:file|link|github|git\+|workspace|npm|http|https):/i.test(input)) return void 0;
+	if (input.startsWith(".") || input.startsWith("_")) return void 0;
+	const at = input.lastIndexOf("@");
+	const version = at > 0 ? input.slice(at + 1) : void 0;
+	const name = at > 0 ? input.slice(0, at) : input;
+	if (version !== void 0 && !/^[a-zA-Z0-9^~][a-zA-Z0-9._+~^-]*$/.test(version)) return void 0;
+	if (!/^(?:@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/.test(name)) return void 0;
+	return {
+		name,
+		version
+	};
+}
+/**
+* 沿 node_modules 链直寻 pnpm CLI。pnpm 的 exports 只暴露 package.json,
+* `require.resolve('pnpm/bin/pnpm.cjs')` 即使文件存在也会被拒;直接按
+* 路径查找是唯一可靠的定位方式。
+* @param from - 起始目录,默认本模块目录。
+* @returns `bin/pnpm.cjs` 绝对路径;整条链都没有时为 undefined。
+*/
+function resolvePnpmCli(from = dirname(fileURLToPath(import.meta.url))) {
+	let dir = from;
+	for (;;) {
+		const candidate = join(dir, "node_modules", "pnpm", "bin", "pnpm.cjs");
+		if (existsSync(candidate)) return candidate;
+		const parent = dirname(dir);
+		if (parent === dir) return void 0;
+		dir = parent;
+	}
+}
+/** 读 profile 的 node_modules/.modules.yaml 里记录的 storeDir;全新或非 pnpm 布局时为 undefined。 */
+function readProfileStoreDir(profileDir) {
+	let text;
+	try {
+		text = readFileSync(join(profileDir, "node_modules", ".modules.yaml"), "utf8");
+	} catch {
+		return;
+	}
+	try {
+		const parsed = JSON.parse(text);
+		if (typeof parsed.storeDir === "string") return parsed.storeDir;
+	} catch {}
+	const line = text.split(/\r?\n/).find((candidate) => candidate.startsWith("storeDir:"));
+	if (line === void 0) return void 0;
+	return line.slice(9).trim().replace(/^['"]|['"]$/g, "");
+}
+function normalizePath(path) {
+	return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+function cliLauncher(cli) {
+	return {
+		label: cli,
+		storePath: (cwd) => {
+			const result = spawnSync(process.execPath, [
+				cli,
+				"store",
+				"path"
+			], {
+				cwd,
+				encoding: "utf8"
+			});
+			return result.status === 0 ? (result.stdout ?? "").trim() : void 0;
+		},
+		run: (args, cwd) => spawnSync(process.execPath, [cli, ...args], {
+			cwd,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				ELECTRON_RUN_AS_NODE: "1"
+			}
+		})
+	};
+}
+function systemLauncher() {
+	return {
+		label: "pnpm (system)",
+		storePath: (cwd) => {
+			const result = spawnSync("pnpm", ["store", "path"], {
+				cwd,
+				encoding: "utf8",
+				shell: process.platform === "win32"
+			});
+			return result.status === 0 ? (result.stdout ?? "").trim() : void 0;
+		},
+		run: (args, cwd) => spawnSync("pnpm", [...args], {
+			cwd,
+			encoding: "utf8",
+			shell: process.platform === "win32"
+		})
+	};
+}
+/**
+* 选出与 profile 兼容的 pnpm:两个大版本的 pnpm store 布局互不兼容
+* (ERR_PNPM_UNEXPECTED_STORE),必须由创建该 node_modules 的同一套
+* store 继续管理。先读 .modules.yaml 的 storeDir,在 profile 目录里
+* 探测各候选的 store(与实际运行同 cwd,避免 npmrc 链差异),取匹配
+* 者;全新 profile 或无人匹配时优先系统 pnpm(官方 `dsh plugin` 的同
+* 源管理者),内置 CLI 只在没有系统 pnpm 的机器上兜底。
+* @param profileDir - 目标 profile 目录。
+* @returns 可用的 pnpm 启动器;一个都没有时为 undefined。
+*/
+function selectPnpm(profileDir) {
+	const bundled = resolvePnpmCli() === void 0 ? void 0 : cliLauncher(resolvePnpmCli());
+	const system = systemLauncher();
+	const probed = bundled === void 0 ? [system] : [bundled, system];
+	const store = readProfileStoreDir(profileDir);
+	if (store !== void 0) for (const candidate of probed) {
+		const path = candidate.storePath(profileDir);
+		if (path !== void 0 && normalizePath(path) === normalizePath(store)) return candidate;
+	}
+	return [system, ...bundled === void 0 ? [] : [bundled]].find((candidate) => candidate.storePath(profileDir) !== void 0);
 }
 /**
 * 从已安装的 harness 包推断安装锚（desktop-app / web-app / base）。
@@ -111,11 +232,12 @@ function reconcilePlugins(before, profileDir, installAnchor) {
 * 在指定 profile 安装一个已校验的 npm 包名。
 * `web` 等价 `dsh plugin --profile web add`；`desktop` 等价 `dsh plugin --profile desktop add`。
 * @param profile - `web` 或 `desktop`。
-* @param packageName - {@link parseNpmPackageName} 的返回值。
+* @param packageName - 不含版本后缀的包名。
 * @param installAnchor - 与 CLI `INSTALL_ANCHOR` 同角色。
+* @param version - 可选版本(dist-tag、semver 或范围),拼入 pnpm 安装参数。
 * @returns 退出码与 stdout/stderr。
 */
-function addProfilePlugin(profile, packageName, installAnchor) {
+function addProfilePlugin(profile, packageName, installAnchor, version = void 0) {
 	if (!isInstallProfile(profile)) return {
 		ok: false,
 		code: 2,
@@ -130,31 +252,17 @@ function addProfilePlugin(profile, packageName, installAnchor) {
 		stdout: "",
 		stderr: `${LOG}: profile ${profile} 没有 shipped 模板`
 	};
-	if (!existsSync(join(dir, "package.json"))) initProfile(dir, template);
+	if (!existsSync(join(dir, "package.json"))) initProfile(dir, template.bundles, template.patchReload);
 	const before = readProfileManifest("dsh", dir);
-	let pnpmCli;
-	try {
-		pnpmCli = resolvePnpmCli();
-	} catch {
-		return {
-			ok: false,
-			code: 127,
-			stdout: "",
-			stderr: `${LOG}: 找不到内置 pnpm，无法安装插件`
-		};
-	}
-	const result = spawnSync(process.execPath, [
-		pnpmCli,
-		"add",
-		packageName
-	], {
-		cwd: dir,
-		encoding: "utf8",
-		env: {
-			...process.env,
-			ELECTRON_RUN_AS_NODE: "1"
-		}
-	});
+	const spec = version === void 0 ? packageName : `${packageName}@${version}`;
+	const pnpm = selectPnpm(dir);
+	if (pnpm === void 0) return {
+		ok: false,
+		code: 127,
+		stdout: "",
+		stderr: `${LOG}: 找不到可用的 pnpm（内置或系统），无法安装插件`
+	};
+	const result = pnpm.run(["add", spec], dir);
 	const stdout = result.stdout ?? "";
 	let stderr = result.stderr ?? "";
 	if (result.error !== void 0) {
@@ -162,7 +270,7 @@ function addProfilePlugin(profile, packageName, installAnchor) {
 			ok: false,
 			code: 127,
 			stdout,
-			stderr: `${LOG}: 无法启动 Node 来运行 pnpm`
+			stderr: `${LOG}: 无法启动 pnpm（${pnpm.label}）`
 		};
 		throw result.error;
 	}
@@ -186,141 +294,91 @@ function addProfilePlugin(profile, packageName, installAnchor) {
 	};
 }
 //#endregion
-//#region lib/types/remote.js
-/** 设置页调用的 Typert Remote：按包名安装 profile 插件。 */
-var __runInitializers = function(thisArg, initializers, value) {
-	var useValue = arguments.length > 2;
-	for (var i = 0; i < initializers.length; i++) value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
-	return useValue ? value : void 0;
-};
-var __esDecorate = function(ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
-	function accept(f) {
-		if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected");
-		return f;
-	}
-	var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-	var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-	var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
-	var _, done = false;
-	for (var i = decorators.length - 1; i >= 0; i--) {
-		var context = {};
-		for (var p in contextIn) context[p] = p === "access" ? {} : contextIn[p];
-		for (var p in contextIn.access) context.access[p] = contextIn.access[p];
-		context.addInitializer = function(f) {
-			if (done) throw new TypeError("Cannot add initializers after decoration has completed");
-			extraInitializers.push(accept(f || null));
-		};
-		var result = (0, decorators[i])(kind === "accessor" ? {
-			get: descriptor.get,
-			set: descriptor.set
-		} : descriptor[key], context);
-		if (kind === "accessor") {
-			if (result === void 0) continue;
-			if (result === null || typeof result !== "object") throw new TypeError("Object expected");
-			if (_ = accept(result.get)) descriptor.get = _;
-			if (_ = accept(result.set)) descriptor.set = _;
-			if (_ = accept(result.init)) initializers.unshift(_);
-		} else if (_ = accept(result)) {
-			if (kind === "field") initializers.unshift(_);
-			else descriptor[key] = _;
-		}
-	}
-	if (target) Object.defineProperty(target, contextIn.name, descriptor);
-	done = true;
-};
-/**
-* 浏览器安装页调用的 Host RPC。
-*/
-let PluginInstallService = (() => {
-	let _classSuper = TypertRemoteService;
-	let _instanceExtraInitializers = [];
-	let _target_decorators;
-	let _install_decorators;
-	return class PluginInstallService extends _classSuper {
-		static {
-			const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : void 0;
-			_target_decorators = [Remote("target")];
-			_install_decorators = [Remote("install")];
-			__esDecorate(this, null, _target_decorators, {
-				kind: "method",
-				name: "target",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "target" in obj,
-					get: (obj) => obj.target
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _install_decorators, {
-				kind: "method",
-				name: "install",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "install" in obj,
-					get: (obj) => obj.install
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			if (_metadata) Object.defineProperty(this, Symbol.metadata, {
-				enumerable: true,
-				configurable: true,
-				writable: true,
-				value: _metadata
-			});
-		}
-		/** 当前组合写入的 profile。 */
-		profile = (__runInitializers(this, _instanceExtraInitializers), "web");
-		/**
-		* @param ctx - Host 上下文。
-		*/
-		constructor(ctx) {
-			super(ctx, "pluginInstall");
-		}
-		/**
-		* 当前组合写入的 profile：浏览器为 `web`，桌面客户端为 `desktop`。
-		* @returns 与 `dsh plugin --profile` 相同的名字。
-		*/
-		async target() {
-			return { profile: this.profile };
-		}
-		/**
-		* 只接受 npm 包名，写入 {@link profile}。
-		* @param packageName - 输入框原文。
-		* @returns 安装结果。
-		*/
-		async install(packageName) {
-			const name = parseNpmPackageName(packageName);
-			if (name === void 0) return {
-				ok: false,
-				code: 2,
-				stdout: "",
-				stderr: "plugin-install: 只接受 npm 包名（例如 @sjhmars/task-notify）"
-			};
-			return addProfilePlugin(this.profile, name, resolveInstallAnchor());
-		}
-	};
-})();
-//#endregion
 //#region lib/types/index.js
 /**
-* Host：设置里用 npm 包名给当前 profile 安装树外插件。
+* Host:设置里用 npm 包名给当前 profile 装树外插件。
+*
+* RPC 面走 connection 的精确 Fetch 路由而不是 Typert Remote:Remote 的
+* 方法标记寄存在 typert-protocol 模块内的注册表里,树外插件经 profile
+* node_modules 解析到的是另一份模块实例,gateway 永远看不见那些标记
+* (表现为 /api 调用 404)。精确路由由 connection 服务直接派发,不经
+* gateway 的端点认领,是官方为"不能用 JSON Remote 的调用"留的通道。
 * @module @sjhmars/plugin-install
 */
 /** Cordis 插件名。 */
 const name = "plugin-install";
 /** 非法 profile 名在加载时失败。 */
 const Config = Schema.object({ profile: Schema.union([Schema.const("web"), Schema.const("desktop")]).default("web") });
+/** 精确 Fetch 路由挂在 connection 服务上。 */
+const inject = ["connection"];
+const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
+function json(value) {
+	return new Response(JSON.stringify(value), { headers: JSON_HEADERS });
+}
 /**
-* 挂上安装 Remote，并把 profile 钉在组合配置上。
-* @param ctx - Host 上下文。
+* 注册两条安装路由并挂上热挂载,按组合配置钉住目标 profile。
+*
+* GET 携带查询参数:精确 Fetch 路由只认 GET/HEAD(POST 保留给 JSON
+* Remote 通道),这个本地同源工具 API 以查询参数传包名。
+* @param ctx - Host 插件上下文。
 * @param config - 组合行配置。
 */
 function apply(ctx, config) {
-	const service = new PluginInstallService(ctx);
-	service.profile = config.profile;
+	ctx.connection.fetch.register({
+		path: "/api/pluginInstall/target",
+		methods: ["GET"],
+		fetch: async () => json({ profile: config.profile })
+	});
+	ctx.connection.fetch.register({
+		path: "/api/pluginInstall/install",
+		methods: ["GET"],
+		fetch: async (request) => {
+			const spec = parseNpmPackageName(new URL(request.url).searchParams.get("package") ?? "");
+			if (spec === void 0) return json({
+				ok: false,
+				code: 2,
+				stdout: "",
+				stderr: "plugin-install: 只接受 npm 包名（可带 @版本，例如 @sjhmars/task-notify@0.2.0）"
+			});
+			const result = addProfilePlugin(config.profile, spec.name, resolveInstallAnchor(), spec.version);
+			if (!result.ok) return json(result);
+			return json(await mountInstalled(ctx, spec.name, result, config.profile));
+		}
+	});
 	ctx.logger.info(`plugin-install: 安装目标 profile=${config.profile}`);
 }
+/**
+* 把刚装好的包挂进运行中的树:首次安装热挂载,更新版本热替换(dispose
+* 旧 entry 后以缓存爆破 URL 重新导入,新代码真正生效)。跨重启的持久
+* 由 profile 清单负责(已写好);任何挂载失败都只降级为"重启后生效",
+* 不影响安装结果。热挂载的行以插件默认配置运行;bundle patch 带 row
+* 配置或覆盖其他行的插件,完整组合以下次重启为准。
+* @param ctx - Host 插件上下文。
+* @param name - the installed package name.
+* @param result - the completed install result.
+* @param profile - 写入的 profile，用来从该目录解析刚装好的入口。
+* @returns the result with the live-mount outcome appended.
+*/
+async function mountInstalled(ctx, name, result, profile) {
+	if (name === "@sjhmars/plugin-install") return {
+		...result,
+		stdout: `${result.stdout}\nplugin-install: 本安装器已写入 profile，请重启 dsh 后生效（不能热替换正在处理这次安装的自己）。`.split("\n").filter((part) => part.length > 0).join("\n")
+	};
+	const stale = [...ctx.loader.entries()].filter((entry) => entryBelongsToPackage(entry.options.name, name) && entry.fiber !== void 0 && !entry.disabled);
+	try {
+		const fresh = `${resolveInstalledPackageUrl(profile, name)}?hot=${Date.now().toString(36)}`;
+		for (const entry of stale) await entry.update({ disabled: true });
+		await ctx.loader.create({ name: fresh });
+		return {
+			...result,
+			stdout: `${result.stdout}\nplugin-install: ${name} 已热${stale.length > 0 ? "替换" : "挂载"}，无需重启；界面部分刷新页面即可。`.split("\n").filter((part) => part.length > 0).join("\n")
+		};
+	} catch (error) {
+		return {
+			...result,
+			stderr: `${result.stderr}\nplugin-install: 安装成功，热挂载/热替换失败，重启后生效：${error instanceof Error ? error.message : String(error)}`.split("\n").filter((part) => part.length > 0).join("\n")
+		};
+	}
+}
 //#endregion
-export { Config, INSTALL_PROFILES, addProfilePlugin, apply, isInstallProfile, name, parseNpmPackageName };
+export { Config, INSTALLER_PACKAGE, INSTALL_PROFILES, addProfilePlugin, apply, entryBelongsToPackage, inject, isInstallProfile, name, parseNpmPackageName };

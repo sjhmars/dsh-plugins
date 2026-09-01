@@ -267,6 +267,23 @@ export class HappySessionSocket {
   }
 
   /**
+   * Assert the session state with a reliable (non-volatile) emit: state
+   * transitions must not ride the droppable heartbeat path, or the App
+   * flickers between online and thinking until the next 2s tick.
+   * @param thinking - `true` while the Host turn is still executing.
+   */
+  keepAliveNow(thinking: boolean): void {
+    this.thinking = thinking
+    this.socket?.emit('session-alive', {
+      sid: this.happySessionId,
+      time: Date.now(),
+      thinking: this.thinking,
+      mode: 'remote',
+    })
+    this.ensureAliveTimer()
+  }
+
+  /**
    * Restart session-alive if the timer was cleared. Happy lists the row as
    * offline once heartbeats stop; opening the chat on the phone does not
    * start them again.
@@ -328,17 +345,31 @@ export class HappySessionSocket {
 
   /**
    * Encrypt and push agentState (permission requests).
+   * Retries on version-mismatch the same way metadata does; a dropped bump
+   * leaves the App with empty `requests` and no Yes/No card.
    * @param agentState - plaintext agentState.
    */
   updateState(agentState: unknown): void {
     const socket = this.socket
     if (socket === undefined) return
+    this.emitState(socket, agentState, this.agentStateVersion, 0)
+  }
+
+  private emitState(
+    socket: Socket,
+    agentState: unknown,
+    expected: number,
+    attempt: number,
+  ): void {
     socket.emit('update-state', {
       sid: this.happySessionId,
       agentState: encryptB64(this.crypto, agentState),
-      expectedVersion: this.agentStateVersion,
+      expectedVersion: expected,
     }, (answer: { result?: string; version?: number }) => {
       if (typeof answer?.version === 'number') this.agentStateVersion = answer.version
+      if (answer?.result === 'version-mismatch' && attempt < 3 && typeof answer.version === 'number') {
+        this.emitState(socket, agentState, answer.version, attempt + 1)
+      }
     })
   }
 

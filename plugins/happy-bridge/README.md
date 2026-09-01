@@ -1,5 +1,7 @@
 # @sjhmars/happy-bridge
 
+> **Remote-control bridge for the Happy mobile app.** Pair an already-running `dsh web` / DeepSeek Harness desktop client with [Happy App](https://github.com/slopus/happy) by scanning a QR code, then remote-control the **same harness sessions** from your phone over the Happy encrypted relay: send messages and images, read replies, approve tool calls / plan reviews / questions, stop a running turn, and switch models. Four grant levels: `watch` / `chat` / `approve` / `full`. "Bridge" here means the remote-control link between desktop harness and phone — not a card game.
+
 电脑照常跑 `dsh web` / 桌面客户端。装上这个插件并扫码后，手机 [Happy App](https://github.com/slopus/happy) 遥控的是**同一套对话**（发消息、看回复、点批准），不是另开一个 agent。
 
 不安装 Happy CLI。不要用 `happy acp -- dsh acp`。本插件不改 DeepSeek Harness 源码，也不改 Happy 官方仓库。

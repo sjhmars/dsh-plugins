@@ -1,6 +1,6 @@
 {
   "name": "@sjhmars/plugin-install",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Install out-of-tree dsh plugins by npm package name from Settings",
   "type": "module",
   "main": "lib/index.js",
@@ -43,14 +43,13 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=0.1.0-rc.5",
     "@deepseek-ai/schemastery": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-app-boot": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-app-boot": ">=0.1.2-alpha.1",
     "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.5",
     "react": "^18.2.0"
   },
   "dependencies": {
