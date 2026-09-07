@@ -1,0 +1,71 @@
+{
+  "name": "@sjhmars/segmented-compaction",
+  "version": "0.1.1",
+  "description": "Recover failed Harness compaction with ordered segmented summaries",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "typecheck": "node scripts/build.mjs --check",
+    "build": "node scripts/build.mjs",
+    "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
+    "prepare:dev": "node scripts/prepare-dev.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.1.2-alpha.1",
+    "@deepseek-ai/schemastery": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-settings": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-llm": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-session": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-compaction": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-token-meter": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.2-alpha.1",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.2-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "~18.3.31",
+    "react": "^18.3.1",
+    "typescript": "^6.0.3",
+    "tsdown": "^0.22.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

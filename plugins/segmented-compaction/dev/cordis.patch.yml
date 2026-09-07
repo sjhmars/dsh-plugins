@@ -1,0 +1,4 @@
+# Use only with an isolated development profile. Paths are machine-local.
+- insert:
+    - id: segmented-compaction
+      name: 'file:///H:/dsh-plugin/plugins/segmented-compaction/lib/index.js'

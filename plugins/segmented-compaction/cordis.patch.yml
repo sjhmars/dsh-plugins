@@ -1,0 +1,4 @@
+# Host middleware also sees compaction calls from scoped agent presets.
+- insert:
+    - id: segmented-compaction
+      name: '@sjhmars/segmented-compaction'

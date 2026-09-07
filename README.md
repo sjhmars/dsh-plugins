@@ -31,6 +31,7 @@ dsh-plugins/
 | [`@sjhmars/happy-bridge`](https://www.npmjs.com/package/@sjhmars/happy-bridge) · [源码](plugins/happy-bridge) | **Remote-control bridge**（远程控制桥）：电脑照常跑 dsh web/桌面；扫码后用手机 Happy App 遥控同一套会话（发消息、看回复、点批准）。Pair by QR code, then the Happy mobile app remote-controls the same harness sessions. | `dsh plugin --profile web add @sjhmars/happy-bridge` | `dsh plugin --profile desktop add @sjhmars/happy-bridge` |
 | [`@sjhmars/pi-ai-thinking`](https://www.npmjs.com/package/@sjhmars/pi-ai-thinking) · [源码](plugins/pi-ai-thinking) | **Model configuration helper**（模型配置辅助）：给设置页创建的自定义 `llm-pi-ai` 模型自动补思考强度四档（`off`/`low`/`high`/`max`），不用改源码或手改 settings.yaml。Automatically adds reasoning-effort presets to custom pi-ai models. | `dsh plugin --profile web add @sjhmars/pi-ai-thinking` | `dsh plugin --profile desktop add @sjhmars/pi-ai-thinking` |
 | [`@sjhmars/plugin-install`](https://www.npmjs.com/package/@sjhmars/plugin-install) · [源码](plugins/plugin-install) | 设置 → 插件页用 npm 包名安装树外插件（0.3.1+ 装完与换版本都会热挂载）。 | `dsh plugin --profile web add @sjhmars/plugin-install` | 桌面组合已内置；设置页写入 `desktop` |
+| `@sjhmars/segmented-compaction` · [源码与本地开发说明](plugins/segmented-compaction) | 原 basic-compaction 超限后，按完整历史与必要的文本切片滚动压缩；含中英文设置。尚未发布 npm。 | 本地 overlay | 共用客户端模块，Desktop 壳待验证 |
 
 ### 版本兼容 / Harness Compatibility
 
