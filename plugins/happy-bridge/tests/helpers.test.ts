@@ -7,11 +7,18 @@ import { sniffImageMime, splitPendingFiles } from '../src/attachments.ts'
 import { inboxReadPrompt, saveInboxFiles, sanitizeInboxName, uniqueInboxName } from '../src/inbox.ts'
 import { decryptJson, encryptJson, encryptBlob, decryptBlob, deriveBlobKey, type CryptoContext } from '../src/encryption.ts'
 import { downloadEncryptedAttachment, uploadEncryptedAttachment } from '../src/http.ts'
-import { classifyInboundText, parseSlashLine, answersFromHappy, customAnswersFromText, planReviewDeclineLabel, parsePermissionRpc, parseHappyInbound } from '../src/inbound.ts'
-import { catalogModelPick, classifyPermissionMode, grantAtLeast, messageEffort, messageModelCode, sameCatalogPick, sameHappyRuntime, sameModelOverride, splitModelCode } from '../src/grant.ts'
+import {
+  CUSTOM_ANSWER_LABEL, classifyInboundText, parseSlashLine, answersFromHappy, answersFromCommunication,
+  communicationAnswersFromWeb, customAnswersFromText, mergeCustomAnswers, planReviewDeclineLabel,
+  parsePermissionRpc, parseCommunicationRpc, parseHappyInbound,
+} from '../src/inbound.ts'
+import { agentStateSnapshot, COMPLETED_CAP, rememberCompleted } from '../src/agent-state.ts'
+import type { HappyRequestEntry } from '../src/types.ts'
+import { catalogModelPick, classifyPermissionMode, grantAtLeast, isPublishedModelEcho, messageEffort, messageModelCode, sameCatalogPick, sameHappyRuntime, sameModelOverride, splitModelCode } from '../src/grant.ts'
 import { historyItems, isBlankSession, pinWakeEffort, resolveSessionPreset, sessionLabel, toolTitle, thinkLabel, happyTool, THINK_TOOL_NAME, unarchivedSessionIds, visibleUserImages, wakeModelSelection, mirrorTargets } from '../src/history.ts'
 import { HAPPY_CLIENT, HAPPY_CLI_VERSION } from '../src/happy-version.ts'
 import { listVirtualDirectory, matchVirtualWorkspace, resolveSpawnDirectory, VIRTUAL_HOME, virtualWorkspaces } from '../src/paths.ts'
+import { resolvePublishedSelection, type HappyModelRow } from '../src/catalogs.ts'
 
 test('legacy 加解密能还原 JSON', () => {
   const ctx: CryptoContext = { variant: 'legacy', key: new Uint8Array(32).fill(7) }
@@ -87,6 +94,41 @@ test('自己发出去的模型选择回声不当成手机点了一次', () => {
   assert.equal(sameCatalogPick(published, { model: 'deepseek-official/flash', effort: 'high' }), true)
   assert.equal(sameCatalogPick(published, { model: 'deepseek-official:other', effort: 'high' }), false)
   assert.equal(sameCatalogPick(undefined, published), false)
+})
+
+test('发消息只带回模型 id 时仍认成自己发布的回声', () => {
+  const published = { model: 'deepseek-official:deepseek-v4-flash', effort: 'high' }
+  assert.equal(isPublishedModelEcho(published, 'deepseek-official:deepseek-v4-flash'), true)
+  assert.equal(isPublishedModelEcho(published, 'deepseek-official/deepseek-v4-flash'), true)
+  assert.equal(isPublishedModelEcho(published, 'deepseek-v4-flash'), true)
+  assert.equal(isPublishedModelEcho(published, 'deepseek-v4-pro'), false)
+  assert.equal(isPublishedModelEcho(undefined, 'deepseek-v4-flash'), false)
+})
+
+test('目录里没有当前模型时不回退成第一项 DeepSeek V4', () => {
+  const official: HappyModelRow = {
+    code: 'deepseek-official/deepseek-v4-flash',
+    value: 'DeepSeek-V4-Flash',
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek-V4-Flash',
+    providerId: 'deepseek-official',
+    providerKind: 'custom',
+    providerName: 'DeepSeek',
+    thinkingLevels: [],
+    effortOptions: [],
+  }
+  const missing = resolvePublishedSelection([official], { provider: 'pi-ai', model: 'my-short' })
+  assert.equal(missing?.row.providerId, 'pi-ai')
+  assert.equal(missing?.row.id, 'my-short')
+  const listed = resolvePublishedSelection([official], {
+    provider: 'deepseek-official',
+    model: 'deepseek-v4-flash',
+    reasoningEffort: 'high',
+  })
+  assert.equal(listed?.row.id, 'deepseek-v4-flash')
+  assert.equal(listed?.effort, 'high')
+  const fallback = resolvePublishedSelection([official], undefined)
+  assert.equal(fallback?.row.id, 'deepseek-v4-flash')
 })
 
 test('Happy 元数据里的当前模型和思考强度', () => {
@@ -190,6 +232,150 @@ test('Happy permission RPC 读出始终允许', () => {
   assert.equal(rpc.approved, true)
   assert.equal(rpc.decision, 'approved_for_session')
   assert.deepEqual(rpc.updatedInput?.answers, { '选颜色': '红' })
+})
+
+test('Happy communication RPC 解析出每题选项与自定义答案', () => {
+  const rpc = parseCommunicationRpc({
+    id: 'ask-1',
+    kind: 'form',
+    status: 'answered',
+    answers: {
+      q1: { options: ['方案 A'] },
+      q2: { options: [], custom: '都要' },
+      q3: { options: ['红', 42, null], custom: '' },
+      bad: 'x',
+    },
+  })
+  assert.equal(rpc.id, 'ask-1')
+  assert.equal(rpc.kind, 'form')
+  assert.equal(rpc.status, 'answered')
+  assert.deepEqual(rpc.answers?.q1, { options: ['方案 A'] })
+  assert.deepEqual(rpc.answers?.q2, { options: [], custom: '都要' })
+  assert.deepEqual(rpc.answers?.q3, { options: ['红'] })
+  assert.equal(rpc.answers?.bad, undefined)
+
+  const cancel = parseCommunicationRpc({ id: 'ask-2', kind: 'form', status: 'cancelled' })
+  assert.equal(cancel.status, 'cancelled')
+  assert.equal(cancel.answers, undefined)
+  assert.equal(parseCommunicationRpc({ id: 'ask-3', status: 'weird' }).status, 'cancelled')
+})
+
+test('communication 答案按题目 id 映回 selected 和 custom', () => {
+  assert.deepEqual(answersFromCommunication(
+    { q1: { options: ['A', 'B'] }, q2: { options: [], custom: '自己写' } },
+    [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }],
+  ), [
+    { id: 'q1', selected: ['A', 'B'] },
+    { id: 'q2', selected: [], custom: '自己写' },
+    { id: 'q3', selected: [] },
+  ])
+  assert.deepEqual(answersFromCommunication(undefined, [{ id: 'q1' }]), [{ id: 'q1', selected: [] }])
+})
+
+test('网页作答映回手机表单的 options 和 custom', () => {
+  assert.deepEqual(communicationAnswersFromWeb([
+    { id: 'q1', selected: ['A'] },
+    { id: 'q2', selected: [], custom: '自己写' },
+    { id: 'q3', selected: ['B'], custom: '' },
+  ]), {
+    q1: { options: ['A'] },
+    q2: { options: [], custom: '自己写' },
+    q3: { options: ['B'] },
+  })
+})
+
+test('点「自定义」后用输入框文本合并，其他题保留选择', () => {
+  assert.equal(CUSTOM_ANSWER_LABEL, '✏️ 自定义…')
+  const questions = [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }]
+  assert.deepEqual(mergeCustomAnswers(questions, '就要这样', {
+    q1: [CUSTOM_ANSWER_LABEL],
+    q2: ['方案 B'],
+  }), [
+    { id: 'q1', selected: [], custom: '就要这样' },
+    { id: 'q2', selected: ['方案 B'] },
+    { id: 'q3', selected: [], custom: '就要这样' },
+  ])
+  assert.deepEqual(mergeCustomAnswers(questions, '都要', {
+    q1: [CUSTOM_ANSWER_LABEL, '顺手也选 A'],
+  }), [
+    { id: 'q1', selected: ['顺手也选 A'], custom: '都要' },
+    { id: 'q2', selected: [], custom: '都要' },
+    { id: 'q3', selected: [], custom: '都要' },
+  ])
+  assert.deepEqual(mergeCustomAnswers([{ id: 'q1' }], '都要', undefined), [
+    { id: 'q1', selected: [], custom: '都要' },
+  ])
+})
+
+test('completedRequests 条目带全 tool/arguments，App schema 才不会整份丢弃', () => {
+  const request: HappyRequestEntry = { tool: 'exit_plan_mode', arguments: { plan: '先把绑定改了' }, createdAt: 1 }
+  const snapshot = agentStateSnapshot({
+    controlledByUser: true,
+    pendingId: 'plan-x',
+    pendingRequest: request,
+    completedRequests: new Map([
+      ['plan-old', { ...request, completedAt: 2, status: 'denied' }],
+    ]),
+  })
+  assert.deepEqual(snapshot.requests['plan-x'], request)
+  assert.deepEqual(snapshot.communications, {})
+  const completed = snapshot.completedRequests['plan-old']
+  assert.equal(completed.tool, 'exit_plan_mode')
+  assert.deepEqual(completed.arguments, { plan: '先把绑定改了' })
+  assert.equal(completed.status, 'denied')
+  assert.ok('completedAt' in completed)
+  assert.ok('createdAt' in completed)
+})
+
+test('挂起的提问走 communications 通道并开放自由输入', () => {
+  const snapshot = agentStateSnapshot({
+    controlledByUser: true,
+    pendingId: 'ask-1',
+    pendingCommunication: {
+      kind: 'form',
+      createdAt: 5,
+      toolUseId: 'ask-1',
+      title: '需要你回答',
+      form: {
+        questions: [{
+          id: 'q1',
+          header: '选择',
+          question: '选哪个',
+          options: [{ label: 'A' }],
+          multiSelect: false,
+          allowCustom: true,
+          required: true,
+        }],
+      },
+    },
+  })
+  assert.deepEqual(snapshot.requests, {})
+  const communication = snapshot.communications['ask-1']
+  assert.equal(communication.kind, 'form')
+  assert.equal(communication.toolUseId, 'ask-1')
+  assert.equal(communication.form.questions[0]?.allowCustom, true)
+  const completed = agentStateSnapshot({
+    controlledByUser: true,
+    completedCommunications: new Map([
+      ['ask-1', {
+        kind: 'form', createdAt: 5, toolUseId: 'ask-1', title: '需要你回答',
+        form: { questions: [] }, completedAt: 6, status: 'answered',
+        answers: { q1: { options: [], custom: '都要' } },
+      }],
+    ]),
+  })
+  assert.equal(completed.completedCommunications['ask-1']?.answers?.q1?.custom, '都要')
+})
+
+test('完成态按 FIFO 上限累积，重新作答移到最新', () => {
+  const map = new Map<string, string>()
+  for (let i = 0; i < COMPLETED_CAP + 5; i++) rememberCompleted(map, `id-${i}`, `v-${i}`)
+  assert.equal(map.size, COMPLETED_CAP)
+  assert.equal(map.has('id-0'), false)
+  assert.equal(map.get(`id-${COMPLETED_CAP + 4}`), `v-${COMPLETED_CAP + 4}`)
+  rememberCompleted(map, 'id-3', 'v-3-new')
+  assert.equal(map.get('id-3'), 'v-3-new')
+  assert.equal(map.has('id-5'), false)
 })
 
 test('会话标签优先用 logged title，否则第一条真人提问，空会话跟网页一样叫新会话', () => {
@@ -383,7 +569,7 @@ test('手机唤醒时日志没写思考强度、网页默认又是同一模型�
   )
 })
 
-test('手机新建或唤醒时把首轮思考强度写成模型认的明确档', () => {
+test('网页首条或手机新建/唤醒时把思考强度写成模型认的明确档', () => {
   const deepseek = ['off', 'low', 'high', 'max']
   assert.equal(pinWakeEffort(undefined, 'high', 'off', deepseek), 'high')
   assert.equal(pinWakeEffort(undefined, 'medium', 'high', deepseek), 'high')

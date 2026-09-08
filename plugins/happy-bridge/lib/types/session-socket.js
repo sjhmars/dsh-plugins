@@ -4,7 +4,7 @@ import { createEnvelope } from '@slopus/happy-wire';
 import { io } from 'socket.io-client';
 import { HAPPY_CLIENT } from "./happy-version.js";
 import { decryptB64, encryptB64 } from "./encryption.js";
-import { parseHappyInbound, parsePermissionRpc } from "./inbound.js";
+import { parseCommunicationRpc, parseHappyInbound, parsePermissionRpc } from "./inbound.js";
 import { registerRpc, requestRpcRegister } from "./rpc.js";
 /**
  * Session-scoped Happy client for one mirrored or spawned conversation.
@@ -91,6 +91,11 @@ export class HappySessionSocket {
             return { ok: true };
         }, this.handlers.log);
         this.rpcMethods.push(`${this.happySessionId}:permission`);
+        await registerRpc(socket, this.happySessionId, 'communication', this.crypto, (params) => {
+            this.handlers.onCommunication(parseCommunicationRpc(params));
+            return { ok: true };
+        }, this.handlers.log);
+        this.rpcMethods.push(`${this.happySessionId}:communication`);
         await registerRpc(socket, this.happySessionId, 'abort', this.crypto, () => {
             this.handlers.onAbort();
             return { ok: true };

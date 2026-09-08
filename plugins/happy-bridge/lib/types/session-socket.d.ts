@@ -1,13 +1,15 @@
 /** One Happy session-scoped socket: encrypt chat, metadata, agentState, permission RPC. */
 import { type CryptoContext } from './encryption.ts';
 import { type HappyInbound } from './inbound.ts';
-import type { PermissionRpc } from './types.ts';
+import type { CommunicationRpc, PermissionRpc } from './types.ts';
 /** Callbacks the bridge installs on one Happy session. */
 export interface SessionHandlers {
     /** Decrypted inbound chat or file. */
     onInbound: (message: InboundMessage) => void;
     /** Phone answered a permission / fake-tool request. */
     onPermission: (rpc: PermissionRpc) => void;
+    /** Phone answered or cancelled a communications-channel form. */
+    onCommunication: (rpc: CommunicationRpc) => void;
     /** Phone tapped Stop. Happy App `sessionAbort` for Rig sends `{}`. */
     onAbort: () => void;
     /** App archived or deleted this Happy session. */

@@ -26,6 +26,10 @@ export const Config = Schema.object({
         Schema.const('approve'),
         Schema.const('full'),
     ]).default('approve'),
+    questionChannel: Schema.union([
+        Schema.const('communications'),
+        Schema.const('permission'),
+    ]).default('communications'),
 });
 /**
  * Mount the Host half: settings namespace, Typert Remote, Happy relay.

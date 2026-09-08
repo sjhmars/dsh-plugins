@@ -133,6 +133,24 @@ export function sameCatalogPick(previous, next) {
         return false;
     return catalogPickKey(previous) === catalogPickKey(next);
 }
+/**
+ * Whether inbound `meta.model` is the pick we last published.
+ * The App often echoes only `currentModelCode` (bare id) on a chat line,
+ * while we publish `provider:id`; treating that as a user switch would
+ * lock the web composer onto the catalog default (DeepSeek V4).
+ * @param published - last pick we wrote, if any.
+ * @param inbound - model code from the inbound message.
+ * @returns true when the inbound model is our own echo.
+ */
+export function isPublishedModelEcho(published, inbound) {
+    if (published?.model === undefined)
+        return false;
+    if (sameCatalogPick({ model: published.model }, { model: inbound }))
+        return true;
+    const publishedSplit = splitModelCode(published.model);
+    const inboundSplit = splitModelCode(inbound);
+    return inboundSplit.provider === '' && inboundSplit.model === publishedSplit.model;
+}
 function catalogPickKey(pick) {
     const split = pick.model === undefined ? undefined : splitModelCode(pick.model);
     const model = split === undefined

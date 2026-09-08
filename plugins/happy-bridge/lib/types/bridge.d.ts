@@ -18,8 +18,6 @@ export declare class HappyBridge {
     private readonly lastPublished;
     /** Count of in-flight phone-originated Host `selectModel` calls. */
     private hostSelectFromPhone;
-    /** Per-agent selection installed on phone wake / spawn, matching Host `selectionFor`. */
-    private readonly selections;
     /** In-flight phone wakes, so two inbound texts do not double-resume. */
     private readonly waking;
     /** Phone stop-session / archive: do not recreate these Happy rows. */
@@ -30,6 +28,10 @@ export declare class HappyBridge {
     private lastArchivedIds;
     /** Serialize phone text so two messages cannot split one attachment batch. */
     private readonly inboundTail;
+    /** One Host-picker pin per live Agent, awaited before the first prompt assembly. */
+    private readonly hostPin;
+    /** Agents that already prepend the pin onto `system-prompt/assemble`. */
+    private readonly assemblePinBound;
     private error;
     private running;
     private scanTimer;
@@ -98,24 +100,12 @@ export declare class HappyBridge {
     private wakeAgent;
     private resumeSession;
     /**
-     * Resume/create composition matching Host `composeAgent`: install model
-     * selection, then mount the preset when a roster exists.
+     * Resume/create composition matching Host `composeAgent`: mount the preset
+     * when a roster exists. Model selection is the Host picker, landed by
+     * `selectModel` in {@link watchFirstAssemble} / {@link rememberModel}.
      * @param presetHint - logged or requested preset id; omitted uses the roster default.
      */
     private composeAgentSetup;
-    /**
-     * Same lazy selection Host `selectionFor` installs: remembered pick, else
-     * the session's last `request/header`, else `agentDefaultModel`. A missing
-     * thinking level keeps the web picker's effort when it is the same model.
-     * Unlike Host `installModelSelection`, an absent effort does not clear
-     * inherited thinking.
-     */
-    private installWakeSelection;
-    /**
-     * Pin provider/model for a phone-woken agent without wiping thinking when
-     * the selection names no effort.
-     */
-    private bindWakeSelection;
     /** Host default model, when the web profile mounted `agentDefaultModel`. */
     private defaultModelSelection;
     /** Registered workspace for this session, or `undefined` when it is not in the sidebar. */
@@ -161,12 +151,18 @@ export declare class HappyBridge {
     private spawn;
     private applySpawnMeta;
     private queueInbound;
+    /** Same queue as inbound text, so a catalog switch lands on the bar before the next send. */
+    private queuePhoneCatalog;
     private onInbound;
     private applyMessageMeta;
     private applyPhoneCatalog;
     private applyModel;
     private applyEffort;
-    /** Keep the last Host pick so Happy metadata can echo the web composer. */
+    /**
+     * Remember a phone-originated pick and land it on the Host picker before
+     * the next request. `onHostModelSelected` is skipped while this runs, so
+     * {@link models} is written here.
+     */
     private rememberModel;
     /**
      * Write the web picker's Host selection (`sessionController.selectModel`) so
@@ -179,8 +175,18 @@ export declare class HappyBridge {
      */
     private onHostModelSelected;
     /**
-     * Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
-     * before the first LLM request, matching the effort Happy metadata advertises.
+     * Land explicit effort on the Host picker and wait for that pin before this
+     * Agent's first prompt assembly, so the request reads the web bar.
+     * @param agent - live agent whose picker should carry explicit effort.
+     */
+    private watchFirstAssemble;
+    private pinHostPicker;
+    /**
+     * Write a concrete reasoningEffort onto the Host picker so the next request
+     * reads the web bar. Always lands via `selectModel`: phone resume/spawn have
+     * no Host interceptor until then, and a live web agent with no conversation
+     * effort would otherwise send the first call without thinking.
+     * @param agent - live agent whose picker should carry explicit effort.
      */
     private ensurePinnedEffort;
     private applyPermission;
@@ -188,6 +194,9 @@ export declare class HappyBridge {
      * Queue the phone text as a user followup. The App already shows the typed
      * bubble; do not send a second user envelope. Images ride as DSH
      * attachments; other files land under `happy-inbox` for Harness `read`.
+     * A turn that is still running gets the text as steering (`agent.steer`),
+     * matching the `steering: true` capability we advertise — otherwise the
+     * App unlocks the composer only to have the message wait a whole turn.
      */
     private followup;
     /**
@@ -205,8 +214,27 @@ export declare class HappyBridge {
      */
     private onPhoneAbort;
     private onPermission;
-    private pushRequests;
+    /**
+     * Answered / cancelled a communications form. Swap the pending form for a
+     * completed one so the App card keeps showing the user's choice verbatim.
+     */
+    private onCommunication;
+    /**
+     * Publish the agentState snapshot: the pending approval / question plus
+     * every completed entry. The App zod-validates the whole snapshot and
+     * blanks it on any malformed entry, so completed entries must always carry
+     * the full original request shape.
+     */
+    private pushAgentState;
+    /**
+     * Complete a permission request: keep the original entry fields (the App
+     * schema rejects completed entries without `tool`/`arguments` — that used
+     * to blank the whole snapshot and leave every card stuck `pending`), add
+     * the outcome, then republish the snapshot.
+     */
     private clearRequest;
+    /** Record a finished communications form and republish the snapshot. */
+    private completeCommunication;
     private pushMetadata;
     private pushAllMetadata;
     private queueOutboundUser;

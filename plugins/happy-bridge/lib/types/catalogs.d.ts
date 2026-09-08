@@ -92,7 +92,8 @@ export interface SessionMetadata {
         resume: false;
         rpcMethods: string[];
         shell: false;
-        steering: false;
+        /** True: mid-turn phone text steers the running turn (`agent.steer`). */
+        steering: boolean;
     };
     tools?: string[];
 }
@@ -116,4 +117,16 @@ export declare function buildSessionMetadata(ctx: Context, source: {
     }[];
     agent?: Agent;
 }, machineId: string, title: string, selection: HappySelection | undefined, _grant: RemoteGrant): Promise<SessionMetadata>;
+/**
+ * Pick the Happy catalog row that matches Host selection.
+ * A known Host pick that is missing from the listed rows stays that pick
+ * (synthetic row) instead of falling back to `models[0]` (usually DeepSeek V4).
+ * @param models - rows advertised to the App.
+ * @param selection - current Host provider/model/effort, when known.
+ * @returns the row to publish, plus effort when the Host named one.
+ */
+export declare function resolvePublishedSelection(models: HappyModelRow[], selection: HappySelection | undefined): {
+    row: HappyModelRow;
+    effort?: string;
+} | undefined;
 //# sourceMappingURL=catalogs.d.ts.map

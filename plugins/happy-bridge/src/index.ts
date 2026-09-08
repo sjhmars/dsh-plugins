@@ -43,6 +43,10 @@ export const Config: Schema<HappyBridgeConfig> = Schema.object({
     Schema.const('approve' as const),
     Schema.const('full' as const),
   ]).default('approve'),
+  questionChannel: Schema.union([
+    Schema.const('communications' as const),
+    Schema.const('permission' as const),
+  ]).default('communications'),
 })
 
 /**

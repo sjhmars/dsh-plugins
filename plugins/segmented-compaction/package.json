@@ -1,6 +1,6 @@
 {
   "name": "@sjhmars/segmented-compaction",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Recover failed Harness compaction with ordered segmented summaries",
   "type": "module",
   "main": "lib/index.js",
@@ -67,5 +67,35 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh",
+    "compaction",
+    "segmented-compaction",
+    "context-window",
+    "summarization"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sjhmars/dsh-plugins.git",
+    "directory": "plugins/segmented-compaction"
+  },
+  "disclosure": {
+    "cloud": true,
+    "network": [
+      "User-configured Harness summarization provider endpoints"
+    ],
+    "offlineMode": false,
+    "apiKeys": [],
+    "permissions": [
+      "settings:segmented-compaction",
+      "session:read-compaction-history",
+      "llm:compaction",
+      "file-system:compaction-journals"
+    ],
+    "jurisdiction": [],
+    "retention": "Local request, response and summary journals under $DSH_HOME/segmented-compaction are retained until manually deleted. Remote retention and jurisdiction depend on the configured model provider."
   }
 }

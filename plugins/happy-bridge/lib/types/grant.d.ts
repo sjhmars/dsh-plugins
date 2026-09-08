@@ -84,4 +84,14 @@ export interface CatalogModelPick {
  * @returns true when the inbound pick is our own echo.
  */
 export declare function sameCatalogPick(previous: CatalogModelPick | undefined, next: CatalogModelPick): boolean;
+/**
+ * Whether inbound `meta.model` is the pick we last published.
+ * The App often echoes only `currentModelCode` (bare id) on a chat line,
+ * while we publish `provider:id`; treating that as a user switch would
+ * lock the web composer onto the catalog default (DeepSeek V4).
+ * @param published - last pick we wrote, if any.
+ * @param inbound - model code from the inbound message.
+ * @returns true when the inbound model is our own echo.
+ */
+export declare function isPublishedModelEcho(published: CatalogModelPick | undefined, inbound: string): boolean;
 //# sourceMappingURL=grant.d.ts.map

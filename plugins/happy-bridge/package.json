@@ -1,6 +1,6 @@
 {
   "name": "@sjhmars/happy-bridge",
-  "version": "0.2.5",
+  "version": "0.3.9",
   "description": "Remote-control bridge: pair a running dsh web/desktop client with the Happy mobile app by QR code, then remote-control the same harness sessions from the phone (send messages, read replies, approve tool calls, switch models)",
   "keywords": [
     "deepseek-harness",
@@ -36,7 +36,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown -c tsdown.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --experimental-test-isolation=none --import ./tests/peer-stubs/register.mjs --test tests/*.test.ts"
   },
   "license": "MIT",
   "publishConfig": { "access": "public" },

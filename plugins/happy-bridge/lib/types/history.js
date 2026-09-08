@@ -412,9 +412,10 @@ export function wakeModelSelection(primary, ...fallbacks) {
     };
 }
 /**
- * Effort the first phone-spawn / phone-wake request should send.
+ * Effort the first web / phone-spawn / phone-wake request should send.
  * Current pick wins; otherwise a preferred (web) value or the model's
  * advertised default, but only when the model lists that id.
+ * Written onto the Host picker via `selectModel`; requests then read that bar.
  * @param currentEffort - already chosen effort, if any.
  * @param preferred - web picker effort to reuse when the model accepts it.
  * @param modelDefault - `resolveModelInfo().reasoning.defaultEffort`.

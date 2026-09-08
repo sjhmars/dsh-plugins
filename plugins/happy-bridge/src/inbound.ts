@@ -1,6 +1,6 @@
 /** Classify inbound Happy user text as a registered slash command or ordinary chat. */
 
-import type { PermissionRpc } from './types.ts'
+import type { CommunicationRpc, PermissionRpc } from './types.ts'
 
 /** Normalized inbound payload from a decrypted Happy message. */
 export type HappyInbound =
@@ -155,6 +155,110 @@ export function parsePermissionRpc(params: unknown): PermissionRpc {
     if (typeof value === 'string') mapped[key] = value
   }
   result.updatedInput = { answers: mapped }
+  return result
+}
+
+/**
+ * Synthetic last option the bridge appends to every question: the App's inline
+ * form has no free-text input, so "custom answer" is a two-tap flow — pick
+ * this option, then type the real answer in the composer.
+ */
+export const CUSTOM_ANSWER_LABEL = '✏️ 自定义…'
+
+/**
+ * Merge composer text with a deferred (marker-picked) submission.
+ * - No deferred selections: the text becomes `custom` for every question
+ *   (the original "type while waiting" behavior).
+ * - With deferred selections: real options are kept per question; questions
+ *   that picked the marker — and questions never answered — take the text
+ *   as `custom`.
+ * @param questions - harness questions in order.
+ * @param text - the composer line.
+ * @param deferred - per-question submitted options, keyed by question id.
+ * @returns one answer row per question.
+ */
+export function mergeCustomAnswers(
+  questions: readonly { id: string }[],
+  text: string,
+  deferred?: Record<string, string[]>,
+): { id: string; selected: string[]; custom?: string }[] {
+  return questions.map((question) => {
+    const selected = deferred?.[question.id]
+    if (selected === undefined) return { id: question.id, selected: [], custom: text }
+    const real = selected.filter(option => option !== CUSTOM_ANSWER_LABEL)
+    const marked = real.length !== selected.length
+    return {
+      id: question.id,
+      selected: real,
+      ...(!marked && real.length > 0 ? {} : { custom: text }),
+    }
+  })
+}
+
+/**
+ * Translate a web-side harness answer batch into Happy communications answers
+ * so the phone card shows the same choice instead of a cancelled form.
+ * @param answers - harness answer rows from the web composer.
+ * @returns answers keyed by question id.
+ */
+export function communicationAnswersFromWeb(
+  answers: readonly { id: string; selected: string[]; custom?: string }[],
+): Record<string, { options: string[]; custom?: string }> {
+  return Object.fromEntries(answers.map(row => [row.id, {
+    options: row.selected,
+    ...(row.custom === undefined || row.custom === '' ? {} : { custom: row.custom }),
+  }]))
+}
+
+/**
+ * Translate Happy communications answers (`{ [question id]: { options, custom } }`)
+ * into harness answer rows. Options become `selected`; free text becomes `custom`.
+ * @param answers - communication RPC answers keyed by question id.
+ * @param questions - original harness questions in order.
+ * @returns one answer row per question.
+ */
+export function answersFromCommunication(
+  answers: Record<string, { options: string[]; custom?: string }> | undefined,
+  questions: readonly { id: string }[],
+): { id: string; selected: string[]; custom?: string }[] {
+  return questions.map((question) => {
+    const answer = answers?.[question.id]
+    if (answer === undefined) return { id: question.id, selected: [] }
+    return {
+      id: question.id,
+      selected: answer.options,
+      ...(answer.custom === undefined ? {} : { custom: answer.custom }),
+    }
+  })
+}
+
+/**
+ * Decode a Happy `communication` RPC body (form answers or cancellation).
+ * Unknown statuses degrade to `cancelled`, which re-asks instead of silently
+ * submitting empty answers.
+ * @param params - decrypted RPC params.
+ * @returns id, form kind, answered/cancelled status, and per-question answers.
+ */
+export function parseCommunicationRpc(params: unknown): CommunicationRpc {
+  const record = asUnknownRecord(params)
+  const result: CommunicationRpc = {
+    id: typeof record.id === 'string' ? record.id : '',
+    kind: typeof record.kind === 'string' && record.kind !== '' ? record.kind : 'form',
+    status: record.status === 'answered' ? 'answered' : 'cancelled',
+  }
+  if (!isUnknownRecord(record.answers)) return result
+  const answers: Record<string, { options: string[]; custom?: string }> = {}
+  for (const [key, value] of Object.entries(record.answers)) {
+    if (!isUnknownRecord(value)) continue
+    const options = Array.isArray(value.options)
+      ? value.options.filter((option): option is string => typeof option === 'string')
+      : []
+    answers[key] = {
+      options,
+      ...(typeof value.custom === 'string' && value.custom !== '' ? { custom: value.custom } : {}),
+    }
+  }
+  result.answers = answers
   return result
 }
 

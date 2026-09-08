@@ -4,14 +4,15 @@ import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions';
 import { archiveSetDiff, hideOnHarness, phoneParkAction, revealOnHarness } from "./archive-sync.js";
+import { agentStateSnapshot, rememberCompleted } from "./agent-state.js";
 import { buildSessionMetadata } from "./catalogs.js";
 import { loadCredentials, markConnected, markDisconnected, peekMachineId, resolveCredentialDir, saveCredentials, addDismissed, loadDismissed, removeDismissed, } from "./credentials.js";
 import { splitPendingFiles } from "./attachments.js";
 import { inboxReadPrompt, saveInboxFiles } from "./inbox.js";
 import { decryptBlob, deriveBlobKey, encryptBlob, machineCrypto, sessionCrypto } from "./encryption.js";
-import { catalogModelPick, classifyPermissionMode, grantAtLeast, messageEffort, messageModelCode, sameCatalogPick, sameHappyRuntime, sameModelOverride, splitModelCode } from "./grant.js";
+import { catalogModelPick, classifyPermissionMode, grantAtLeast, isPublishedModelEcho, messageEffort, messageModelCode, sameCatalogPick, sameHappyRuntime, sameModelOverride, splitModelCode } from "./grant.js";
 import { assistantParts, happyTool, historyItems, isBlankSession, resolveSessionPreset, sessionLabel, thinkCard, thinkLabel, THINK_TOOL_NAME, pinWakeEffort, unarchivedSessionIds, visibleUserImages, visibleUserText, wakeModelSelection, } from "./history.js";
-import { answersFromHappy, classifyInboundText, customAnswersFromText, planReviewDeclineLabel } from "./inbound.js";
+import { answersFromCommunication, answersFromHappy, classifyInboundText, communicationAnswersFromWeb, mergeCustomAnswers, planReviewDeclineLabel, } from "./inbound.js";
 import { createOrLoadMachine, createOrLoadSession, archiveHappySession, deleteHappySession, downloadEncryptedAttachment, listHappySessions, uploadEncryptedAttachment } from "./http.js";
 import { HappyMachineSocket } from "./machine.js";
 import { startPairing } from "./pairing.js";
@@ -35,8 +36,6 @@ export class HappyBridge {
     lastPublished = new Map();
     /** Count of in-flight phone-originated Host `selectModel` calls. */
     hostSelectFromPhone = 0;
-    /** Per-agent selection installed on phone wake / spawn, matching Host `selectionFor`. */
-    selections = new WeakMap();
     /** In-flight phone wakes, so two inbound texts do not double-resume. */
     waking = new Map();
     /** Phone stop-session / archive: do not recreate these Happy rows. */
@@ -47,6 +46,10 @@ export class HappyBridge {
     lastArchivedIds = new Set();
     /** Serialize phone text so two messages cannot split one attachment batch. */
     inboundTail = new Map();
+    /** One Host-picker pin per live Agent, awaited before the first prompt assembly. */
+    hostPin = new WeakMap();
+    /** Agents that already prepend the pin onto `system-prompt/assemble`. */
+    assemblePinBound = new WeakSet();
     error;
     running = false;
     scanTimer;
@@ -239,6 +242,7 @@ export class HappyBridge {
                 this.wakePhone(existing, true);
                 return;
             }
+            void this.watchFirstAssemble(agent);
             if (isBlankSession(agent.session.events) && !this.phoneSpawned.has(agent.id))
                 return;
             void this.mirrorAgent(agent).then(() => {
@@ -315,10 +319,10 @@ export class HappyBridge {
                     if (current === undefined)
                         return { kind: 'error', text: '当前没有已选模型' };
                     if (id === '') {
-                        this.rememberModel(invocation.agent, { provider: current.provider, model: current.model });
+                        await this.rememberModel(invocation.agent, { provider: current.provider, model: current.model });
                         return { kind: 'success', text: '推理档已恢复为模型默认' };
                     }
-                    this.rememberModel(invocation.agent, {
+                    await this.rememberModel(invocation.agent, {
                         provider: current.provider,
                         model: current.model,
                         reasoningEffort: ReasoningEffortId(id),
@@ -511,6 +515,7 @@ export class HappyBridge {
                 return;
             this.onSessionEvent(link, event);
         }, { global: true });
+        void this.watchFirstAssemble(agent);
     }
     /** Copy log events newer than {@link Link.lastForwardedSeq} onto Happy. */
     drainNewEvents(link, agent) {
@@ -565,15 +570,16 @@ export class HappyBridge {
             resumeSessionId: SessionId(link.dshId),
             setup,
         });
-        await this.ensurePinnedEffort(handle.agent);
+        await this.watchFirstAssemble(handle.agent);
         const current = this.links.get(link.dshId);
         if (current !== undefined)
             this.attachAgent(current, handle.agent);
         return handle.agent;
     }
     /**
-     * Resume/create composition matching Host `composeAgent`: install model
-     * selection, then mount the preset when a roster exists.
+     * Resume/create composition matching Host `composeAgent`: mount the preset
+     * when a roster exists. Model selection is the Host picker, landed by
+     * `selectModel` in {@link watchFirstAssemble} / {@link rememberModel}.
      * @param presetHint - logged or requested preset id; omitted uses the roster default.
      */
     async composeAgentSetup(presetHint) {
@@ -583,80 +589,10 @@ export class HappyBridge {
             resolvedId = (await presets.resolve(presetHint)).id;
         }
         return async (agentCtx) => {
-            this.installWakeSelection(agentCtx);
             if (presets !== undefined && resolvedId !== undefined) {
                 await presets.mount(agentCtx, resolvedId);
             }
         };
-    }
-    /**
-     * Same lazy selection Host `selectionFor` installs: remembered pick, else
-     * the session's last `request/header`, else `agentDefaultModel`. A missing
-     * thinking level keeps the web picker's effort when it is the same model.
-     * Unlike Host `installModelSelection`, an absent effort does not clear
-     * inherited thinking.
-     */
-    installWakeSelection(agentCtx) {
-        const agent = agentCtx.agent;
-        if (agent === undefined)
-            throw new Error('happy-bridge: agent setup has no scoped agent');
-        if (this.selections.has(agent))
-            return;
-        let picked;
-        const bridge = this;
-        const selection = {
-            get current() {
-                if (picked !== undefined)
-                    return picked;
-                return bridge.currentModel(agent);
-            },
-            set current(next) {
-                picked = next;
-            },
-            assembled: undefined,
-        };
-        this.bindWakeSelection(agentCtx, selection);
-        this.selections.set(agent, selection);
-        const current = selection.current;
-        if (current === undefined)
-            return;
-        const existing = this.models.get(agent.id);
-        if (existing === undefined || (existing.reasoningEffort === undefined && current.reasoningEffort !== undefined)) {
-            this.models.set(agent.id, current);
-        }
-    }
-    /**
-     * Pin provider/model for a phone-woken agent without wiping thinking when
-     * the selection names no effort.
-     */
-    bindWakeSelection(agentCtx, selection) {
-        agentCtx.on('system-prompt/assemble', async (_assembly, _context, next) => {
-            const selected = selection.current;
-            const assembled = await next();
-            selection.assembled = selected;
-            if (selected === undefined)
-                return assembled;
-            return {
-                ...assembled,
-                variables: {
-                    ...assembled.variables,
-                    provider: selected.provider,
-                    model: selected.model,
-                },
-            };
-        });
-        agentCtx.on('agent/request', async (_payload, next) => {
-            const resolved = await next();
-            const selected = selection.assembled;
-            if (selected === undefined)
-                return resolved;
-            return {
-                ...resolved,
-                provider: selected.provider,
-                model: selected.model,
-                ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
-            };
-        });
     }
     /** Host default model, when the web profile mounted `agentDefaultModel`. */
     defaultModelSelection() {
@@ -747,10 +683,11 @@ export class HappyBridge {
         const socket = new HappySessionSocket(sessionId, credentials.token, this.config.serverUrl, crypto, {
             onInbound: message => this.queueInbound(agent.id, message),
             onPermission: rpc => this.onPermission(agent.id, rpc),
+            onCommunication: rpc => this.onCommunication(agent.id, rpc),
             onAbort: () => this.onPhoneAbort(agent.id),
             onArchived: () => this.onPhoneArchive(sessionId, agent.id),
             onResumed: () => this.onPhoneRestore(agent.id),
-            onCatalog: meta => this.applyPhoneCatalog(agent.id, meta),
+            onCatalog: meta => this.queuePhoneCatalog(agent.id, meta),
             log: this.log,
         });
         try {
@@ -780,9 +717,12 @@ export class HappyBridge {
             events: [],
             lastForwardedSeq: lastEventSeq(agent.session.events),
             parked: false,
+            completedRequests: new Map(),
+            completedCommunications: new Map(),
         };
         this.links.set(agent.id, link);
         this.happyToDsh.set(sessionId, agent.id);
+        await this.watchFirstAssemble(agent);
         await this.pushMetadata(link);
         if (seq === 0)
             await this.replayHistory(link);
@@ -811,10 +751,11 @@ export class HappyBridge {
         const socket = new HappySessionSocket(created.id, credentials.token, this.config.serverUrl, crypto, {
             onInbound: message => this.queueInbound(dshId, message),
             onPermission: rpc => this.onPermission(dshId, rpc),
+            onCommunication: rpc => this.onCommunication(dshId, rpc),
             onAbort: () => this.onPhoneAbort(dshId),
             onArchived: () => this.onPhoneArchive(created.id, dshId),
             onResumed: () => this.onPhoneRestore(dshId),
-            onCatalog: meta => this.applyPhoneCatalog(dshId, meta),
+            onCatalog: meta => this.queuePhoneCatalog(dshId, meta),
             log: this.log,
         });
         try {
@@ -843,6 +784,8 @@ export class HappyBridge {
             events: stored.events,
             lastForwardedSeq: -1,
             parked: false,
+            completedRequests: new Map(),
+            completedCommunications: new Map(),
             ...(stored.headerAgentPreset === undefined ? {} : { headerAgentPreset: stored.headerAgentPreset }),
         };
         this.links.set(dshId, link);
@@ -1019,8 +962,8 @@ export class HappyBridge {
             const workspace = this.ctx.get('workspaceRegistry')?.list().find(item => item.path === real);
             await workspace?.attachSession(sessionId);
             this.phoneSpawned.add(handle.agent.id);
-            this.applySpawnMeta(handle.agent, options);
-            await this.ensurePinnedEffort(handle.agent);
+            await this.applySpawnMeta(handle.agent, options);
+            await this.watchFirstAssemble(handle.agent);
             await this.mirrorAgent(handle.agent, options.sessionId);
             const link = this.links.get(handle.agent.id);
             return { type: 'success', sessionId: link?.socket.happySessionId ?? options.sessionId ?? handle.agent.id };
@@ -1029,17 +972,23 @@ export class HappyBridge {
             return { type: 'error', errorMessage: error instanceof Error ? error.message : String(error) };
         }
     }
-    applySpawnMeta(agent, options) {
+    async applySpawnMeta(agent, options) {
         if (options.modelMode !== undefined)
-            this.applyModel(agent, options.modelMode, options.effortLevel);
+            await this.applyModel(agent, options.modelMode, options.effortLevel);
         else if (options.effortLevel !== undefined)
-            this.applyEffort(agent, options.effortLevel);
+            await this.applyEffort(agent, options.effortLevel);
         if (options.permissionMode !== undefined)
             this.applyPermission(agent, options.permissionMode, true);
     }
     queueInbound(dshId, message) {
         const previous = this.inboundTail.get(dshId) ?? Promise.resolve();
         const next = previous.then(() => this.onInbound(dshId, message), () => this.onInbound(dshId, message));
+        this.inboundTail.set(dshId, next);
+    }
+    /** Same queue as inbound text, so a catalog switch lands on the bar before the next send. */
+    queuePhoneCatalog(dshId, meta) {
+        const previous = this.inboundTail.get(dshId) ?? Promise.resolve();
+        const next = previous.then(() => this.applyPhoneCatalog(dshId, meta), () => this.applyPhoneCatalog(dshId, meta));
         this.inboundTail.set(dshId, next);
     }
     async onInbound(dshId, message) {
@@ -1067,16 +1016,25 @@ export class HappyBridge {
         const files = await this.drainPhoneFiles(link);
         const pending = link.pendingHuman;
         if (pending?.kind === 'ask') {
-            pending.resolve({ answers: customAnswersFromText(pending.questions, message.text) });
+            const answers = mergeCustomAnswers(pending.questions, message.text, pending.deferred);
+            pending.resolve({ answers });
             delete link.pendingHuman;
-            this.clearRequest(link, pending.id, 'canceled');
+            if (pending.communication !== undefined) {
+                this.completeCommunication(link, pending.id, pending.communication, 'answered', Object.fromEntries(answers.map(row => [row.id, {
+                        options: row.selected,
+                        ...(row.custom === undefined ? {} : { custom: row.custom }),
+                    }])));
+            }
+            else {
+                this.clearRequest(link, pending.id, 'canceled', pending.request);
+            }
             link.socket.sendToolEnd(pending.id);
             return;
         }
         if (pending?.kind === 'plan-review') {
             pending.reject(new UserQuestionError('the user cancelled ask_user_question', 'ASK_CANCELLED'));
             delete link.pendingHuman;
-            this.clearRequest(link, pending.id, 'canceled');
+            this.clearRequest(link, pending.id, 'canceled', pending.request);
             link.socket.sendToolEnd(pending.id);
         }
         if (!grantAtLeast(this.config.remoteGrant, 'chat')) {
@@ -1093,7 +1051,6 @@ export class HappyBridge {
             return;
         }
         const { agent } = ensured;
-        await this.ensurePinnedEffort(agent);
         const names = new Set((this.ctx.get('commands')?.list(agent) ?? []).map(command => command.name));
         const kind = classifyInboundText(message.text, names);
         await this.applyMessageMeta(current, agent, message.meta, kind === 'command');
@@ -1114,32 +1071,41 @@ export class HappyBridge {
         const model = messageModelCode(meta);
         const effort = messageEffort(meta);
         const permissionMode = meta.permissionMode;
-        if (model !== undefined) {
+        // 手机会把会话元数据里最后发布的模型/思考强度作为 meta 回声附在每条
+        // 消息上。那只是我们自己发布的内容，不是用户点了一次换模型/换档；
+        // 盲目回写会把网页侧刚换好的选择反复顶回去（v4-flash / 强度自锁环）。
+        // 模型与思考强度各自与最后发布值比对，只有真正的差异才应用。
+        const published = this.lastPublished.get(agent.id);
+        const modelIsEcho = model !== undefined && isPublishedModelEcho(published, model);
+        const effortIsEcho = effort !== undefined
+            && published?.effort != null
+            && effort === published.effort;
+        if (model !== undefined && !modelIsEcho) {
             if (!grantAtLeast(this.config.remoteGrant, 'full')) {
                 link.socket.sendText('service', '改模型需要远程档「完整」，这条消息仍会发出。');
             }
             else {
-                this.applyModel(agent, model, typeof effort === 'string' ? effort : effort === null ? null : undefined);
+                await this.applyModel(agent, model, typeof effort === 'string' ? effort : effort === null ? null : undefined);
             }
         }
-        else if (effort === null || typeof effort === 'string') {
+        else if ((effort === null || typeof effort === 'string') && !effortIsEcho) {
             if (!grantAtLeast(this.config.remoteGrant, 'full')) {
                 link.socket.sendText('service', '改思考强度需要远程档「完整」，这条消息仍会发出。');
             }
             else if (effort === null) {
                 const current = this.currentModel(agent);
                 if (current !== undefined)
-                    this.rememberModel(agent, { provider: current.provider, model: current.model });
+                    await this.rememberModel(agent, { provider: current.provider, model: current.model });
             }
             else {
-                this.applyEffort(agent, effort);
+                await this.applyEffort(agent, effort);
             }
         }
         if (typeof permissionMode === 'string' && permissionMode !== '') {
             this.applyPermission(agent, permissionMode, isCommand);
         }
     }
-    applyPhoneCatalog(dshId, meta) {
+    async applyPhoneCatalog(dshId, meta) {
         if (!grantAtLeast(this.config.remoteGrant, 'full'))
             return;
         const pick = catalogModelPick(meta);
@@ -1148,24 +1114,25 @@ export class HappyBridge {
         const published = this.lastPublished.get(dshId);
         if (published === undefined || sameCatalogPick(published, pick))
             return;
+        this.log(`手机模型选择 ${pick.model ?? ''}${pick.effort ?? ''}（上次发布 ${published.model ?? '无'}），准备应用`);
         const link = this.links.get(dshId);
         const agent = link === undefined ? undefined : this.requireAgent(link);
         if (agent === undefined)
             return;
         if (pick.model !== undefined) {
-            this.applyModel(agent, pick.model, pick.effort);
+            await this.applyModel(agent, pick.model, pick.effort);
             return;
         }
         if (pick.effort === null) {
             const current = this.currentModel(agent);
             if (current !== undefined)
-                this.rememberModel(agent, { provider: current.provider, model: current.model });
+                await this.rememberModel(agent, { provider: current.provider, model: current.model });
             return;
         }
         if (typeof pick.effort === 'string')
-            this.applyEffort(agent, pick.effort);
+            await this.applyEffort(agent, pick.effort);
     }
-    applyModel(agent, code, effort) {
+    async applyModel(agent, code, effort) {
         const split = splitModelCode(code);
         const current = this.currentModel(agent);
         const provider = split.provider === '' ? current?.provider ?? '' : split.provider;
@@ -1184,24 +1151,25 @@ export class HappyBridge {
             model: split.model,
             ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         };
-        this.rememberModel(agent, next);
+        await this.rememberModel(agent, next);
     }
-    applyEffort(agent, effort) {
+    async applyEffort(agent, effort) {
         const current = this.currentModel(agent);
         if (current === undefined)
             return;
-        this.rememberModel(agent, { ...current, reasoningEffort: ReasoningEffortId(effort) });
+        await this.rememberModel(agent, { ...current, reasoningEffort: ReasoningEffortId(effort) });
     }
-    /** Keep the last Host pick so Happy metadata can echo the web composer. */
-    rememberModel(agent, next) {
+    /**
+     * Remember a phone-originated pick and land it on the Host picker before
+     * the next request. `onHostModelSelected` is skipped while this runs, so
+     * {@link models} is written here.
+     */
+    async rememberModel(agent, next) {
         const previous = this.models.get(agent.id);
-        this.models.set(agent.id, next);
-        const selection = this.selections.get(agent);
-        if (selection !== undefined)
-            selection.current = next;
         if (sameModelOverride(previous, next))
             return;
-        void this.syncHostSelection(agent, next);
+        this.models.set(agent.id, next);
+        await this.syncHostSelection(agent, next);
     }
     /**
      * Write the web picker's Host selection (`sessionController.selectModel`) so
@@ -1237,6 +1205,7 @@ export class HappyBridge {
     onHostModelSelected(sessionId, selection) {
         if (this.hostSelectFromPhone)
             return;
+        this.log(`网页选模型 ${selection.provider}/${selection.model}${selection.reasoningEffort ?? ''}，同步到手机`);
         const next = {
             provider: selection.provider,
             model: selection.model,
@@ -1244,18 +1213,39 @@ export class HappyBridge {
         };
         this.models.set(sessionId, next);
         const link = this.links.get(sessionId);
-        const agent = link?.agent;
-        if (agent !== undefined) {
-            const current = this.selections.get(agent);
-            if (current !== undefined)
-                current.current = next;
-        }
         if (link !== undefined && !link.parked)
             void this.pushMetadata(link);
     }
     /**
-     * Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
-     * before the first LLM request, matching the effort Happy metadata advertises.
+     * Land explicit effort on the Host picker and wait for that pin before this
+     * Agent's first prompt assembly, so the request reads the web bar.
+     * @param agent - live agent whose picker should carry explicit effort.
+     */
+    watchFirstAssemble(agent) {
+        const pending = this.pinHostPicker(agent);
+        if (this.assemblePinBound.has(agent))
+            return pending;
+        this.assemblePinBound.add(agent);
+        agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+            await this.pinHostPicker(agent);
+            return next();
+        }, { prepend: true });
+        return pending;
+    }
+    pinHostPicker(agent) {
+        const existing = this.hostPin.get(agent);
+        if (existing !== undefined)
+            return existing;
+        const pending = this.ensurePinnedEffort(agent);
+        this.hostPin.set(agent, pending);
+        return pending;
+    }
+    /**
+     * Write a concrete reasoningEffort onto the Host picker so the next request
+     * reads the web bar. Always lands via `selectModel`: phone resume/spawn have
+     * no Host interceptor until then, and a live web agent with no conversation
+     * effort would otherwise send the first call without thinking.
+     * @param agent - live agent whose picker should carry explicit effort.
      */
     async ensurePinnedEffort(agent) {
         const current = this.currentModel(agent);
@@ -1278,13 +1268,13 @@ export class HappyBridge {
             // 单个模型能力查询失败时仍用已有选择，不挡住唤醒。
         }
         const effort = pinWakeEffort(current.reasoningEffort, preferred, modelDefault, supported);
-        if (effort === undefined || effort === current.reasoningEffort)
-            return;
-        const next = { ...current, reasoningEffort: ReasoningEffortId(effort) };
+        const next = {
+            provider: current.provider,
+            model: current.model,
+            ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
+        };
         this.models.set(agent.id, next);
-        const selection = this.selections.get(agent);
-        if (selection !== undefined)
-            selection.current = next;
+        await this.syncHostSelection(agent, next);
     }
     applyPermission(agent, mode, fromCommand) {
         const presets = this.ctx.get('permissionPresets');
@@ -1315,6 +1305,9 @@ export class HappyBridge {
      * Queue the phone text as a user followup. The App already shows the typed
      * bubble; do not send a second user envelope. Images ride as DSH
      * attachments; other files land under `happy-inbox` for Harness `read`.
+     * A turn that is still running gets the text as steering (`agent.steer`),
+     * matching the `steering: true` capability we advertise — otherwise the
+     * App unlocks the composer only to have the message wait a whole turn.
      */
     async followup(link, agent, text, files) {
         const blocks = [];
@@ -1343,7 +1336,11 @@ export class HappyBridge {
             return;
         link.skipNextUser += 1;
         link.agent = agent;
-        agent.followup(createUserMessage({ content: blocks, source: { kind: 'user' } }));
+        const message = createUserMessage({ content: blocks, source: { kind: 'user' } });
+        if (agent.status === 'running' && link.pendingHuman === undefined)
+            agent.steer(message);
+        else
+            agent.followup(message);
     }
     /**
      * Claim every download started before this text, wait, keep the successes.
@@ -1493,11 +1490,10 @@ export class HappyBridge {
             kind: 'approval',
             id,
             toolName: req.toolName,
-            happyName: card.name,
-            arguments: card.args,
+            request: { tool: card.name, arguments: card.args, createdAt: Date.now() },
             resolve: resolvePhone,
         };
-        this.pushRequests(link);
+        this.pushAgentState(link);
         link.socket.keepAliveNow(true);
         // controller.abort() 会取消网页那一环,next() 的拒绝必须接住,
         // 避免未处理的 Promise 报错。
@@ -1509,8 +1505,9 @@ export class HappyBridge {
         if (winner.src === 'phone')
             controller.abort();
         if (winner.src === 'web' && link.pendingHuman?.kind === 'approval' && link.pendingHuman.id === id) {
+            const pending = link.pendingHuman;
             delete link.pendingHuman;
-            this.clearRequest(link, id, winner.outcome === 'allowed-once' ? 'approved' : 'canceled');
+            this.clearRequest(link, id, winner.outcome === 'allowed-once' ? 'approved' : 'canceled', pending.request);
         }
         // 权限结束、回合还在跑:立刻用可靠通道再声明一次 thinking,
         // 不等 2 秒的 volatile 心跳碰运气(否则在线/思考来回跳)。
@@ -1537,6 +1534,7 @@ export class HappyBridge {
                 link.pendingHuman = {
                     kind: 'plan-review',
                     id,
+                    request: { tool: 'exit_plan_mode', arguments: { plan }, createdAt: Date.now() },
                     resolve,
                     reject,
                     approveLabel: first.intent.approve,
@@ -1544,20 +1542,55 @@ export class HappyBridge {
                     questionId: first.id,
                 };
                 link.socket.sendToolStart(id, 'exit_plan_mode', { plan }, '审阅计划', '审阅计划');
-                this.pushRequests(link);
+                this.pushAgentState(link);
                 return;
             }
             const id = `ask-${createLocalId()}`;
-            link.pendingHuman = {
-                kind: 'ask',
-                id,
-                resolve,
-                reject,
-                questions: request.questions.map(question => ({ id: question.id, question: question.question })),
-            };
-            link.socket.sendToolStart(id, 'AskUserQuestion', {
-                questions: request.questions.map(question => ({
-                    question: question.question,
+            // 首题附一行提示：自定义回答直接走输入框。App 的选项行没有「禁用」
+            // 能力（数据模型无 disabled 字段，点了就会选中并锁表单），所以提示
+            // 放在问题文本里，而不是做成不可选的选项。
+            const hint = '（自定义回答：直接在下方聊天输入框输入并发送）';
+            const questions = request.questions.map((question, index) => ({
+                id: question.id,
+                question: index === 0 ? `${question.question}\n${hint}` : question.question,
+            }));
+            if (this.config.questionChannel === 'communications') {
+                // Happy 的表单通道：选项 + 答案回显；自由回答由输入框承担。
+                const form = request.questions.map((question, index) => ({
+                    id: question.id,
+                    header: question.header ?? question.question.slice(0, 24),
+                    question: questions[index]?.question ?? question.question,
+                    options: (question.options ?? []).map(option => ({
+                        label: option.label,
+                        ...(option.description === undefined ? {} : { description: option.description }),
+                    })),
+                    multiSelect: question.multiSelect === true,
+                    allowCustom: true,
+                    required: true,
+                }));
+                const communication = {
+                    kind: 'form',
+                    createdAt: Date.now(),
+                    toolUseId: id,
+                    title: '需要你回答',
+                    form: { questions: form },
+                };
+                link.pendingHuman = {
+                    kind: 'ask',
+                    id,
+                    request: { tool: 'request_user_input', arguments: { questions: form }, createdAt: communication.createdAt },
+                    communication,
+                    resolve,
+                    reject,
+                    questions,
+                };
+                link.socket.sendToolStart(id, 'request_user_input', { questions: form }, '需要你回答', '需要你回答');
+                this.pushAgentState(link);
+                return;
+            }
+            const arguments_ = {
+                questions: request.questions.map((question, index) => ({
+                    question: questions[index]?.question ?? question.question,
                     header: question.header ?? question.question.slice(0, 24),
                     options: (question.options ?? []).map(option => ({
                         label: option.label,
@@ -1565,8 +1598,17 @@ export class HappyBridge {
                     })),
                     multiSelect: question.multiSelect === true,
                 })),
-            }, '需要你回答', '需要你回答');
-            this.pushRequests(link);
+            };
+            link.pendingHuman = {
+                kind: 'ask',
+                id,
+                request: { tool: 'AskUserQuestion', arguments: arguments_, createdAt: Date.now() },
+                resolve,
+                reject,
+                questions,
+            };
+            link.socket.sendToolStart(id, 'AskUserQuestion', arguments_, '需要你回答', '需要你回答');
+            this.pushAgentState(link);
         });
         const web = original.call(questions, { ...request, signal: combined });
         return Promise.race([
@@ -1578,10 +1620,19 @@ export class HappyBridge {
                 throw error;
             }),
             web.then((answer) => {
-                if (link.pendingHuman !== undefined) {
-                    this.clearRequest(link, link.pendingHuman.id, 'canceled');
-                    link.socket.sendToolEnd(link.pendingHuman.id);
+                const pending = link.pendingHuman;
+                if (pending !== undefined) {
                     delete link.pendingHuman;
+                    // 网页已经作答：把同一份答案写回手机卡片。标成 cancelled 会让 App
+                    // 走进「取消表单 + 输入框自定义」路径，把会话元数据里的模型回写成
+                    // 目录第一项（DeepSeek V4）并同步回网页模型栏。
+                    if (pending.kind === 'ask' && pending.communication !== undefined) {
+                        this.completeCommunication(link, pending.id, pending.communication, 'answered', communicationAnswersFromWeb(answer.answers));
+                    }
+                    else {
+                        this.clearRequest(link, pending.id, 'approved', pending.request);
+                    }
+                    link.socket.sendToolEnd(pending.id);
                 }
                 return answer;
             }),
@@ -1603,74 +1654,115 @@ export class HappyBridge {
     onPermission(dshId, rpc) {
         const link = this.links.get(dshId);
         const pending = link?.pendingHuman;
-        if (link === undefined || pending === undefined || pending.id !== rpc.id)
+        if (link === undefined || pending === undefined || pending.id !== rpc.id) {
+            this.log(`收到无法匹配的审批答复 id=${rpc.id}（旧卡片，或另一个实例抢走了本会话的 RPC）`);
             return;
+        }
         if (pending.kind === 'approval') {
             if (rpc.approved) {
                 if (rpc.decision === 'approved_for_session')
                     link.alwaysAllow.add(pending.toolName);
                 pending.resolve('allowed-once');
-                this.clearRequest(link, rpc.id, 'approved');
+                delete link.pendingHuman;
+                this.clearRequest(link, rpc.id, 'approved', pending.request);
             }
             else {
                 pending.resolve('rejected');
-                this.clearRequest(link, rpc.id, 'denied');
+                delete link.pendingHuman;
+                this.clearRequest(link, rpc.id, 'denied', pending.request);
             }
-            delete link.pendingHuman;
             return;
         }
         if (pending.kind === 'plan-review') {
             const selected = rpc.approved ? pending.approveLabel : pending.declineLabel;
             pending.resolve({ answers: [{ id: pending.questionId, selected: [selected] }] });
-            this.clearRequest(link, rpc.id, rpc.approved ? 'approved' : 'denied');
             delete link.pendingHuman;
+            this.clearRequest(link, rpc.id, rpc.approved ? 'approved' : 'denied', pending.request);
             link.socket.sendToolEnd(rpc.id);
             return;
         }
         if (!rpc.approved) {
             pending.reject(new Error('ASK_ABORTED'));
-            this.clearRequest(link, rpc.id, 'denied');
             delete link.pendingHuman;
+            this.clearRequest(link, rpc.id, 'denied', pending.request);
             link.socket.sendToolEnd(rpc.id);
             return;
         }
         const mapped = answersFromHappy(rpc.updatedInput?.answers, pending.questions);
         pending.resolve({ answers: mapped.map(row => ({ id: row.id, selected: row.selected })) });
-        this.clearRequest(link, rpc.id, 'approved');
         delete link.pendingHuman;
+        this.clearRequest(link, rpc.id, 'approved', pending.request);
         link.socket.sendToolEnd(rpc.id);
     }
-    pushRequests(link) {
-        const pending = link.pendingHuman;
-        const requests = {};
-        if (pending !== undefined) {
-            if (pending.kind === 'approval') {
-                requests[pending.id] = {
-                    tool: pending.happyName,
-                    arguments: pending.arguments,
-                    createdAt: Date.now(),
-                };
-            }
-            else if (pending.kind === 'plan-review') {
-                requests[pending.id] = { tool: 'exit_plan_mode', arguments: {}, createdAt: Date.now() };
-            }
-            else {
-                requests[pending.id] = { tool: 'AskUserQuestion', arguments: {}, createdAt: Date.now() };
-            }
+    /**
+     * Answered / cancelled a communications form. Swap the pending form for a
+     * completed one so the App card keeps showing the user's choice verbatim.
+     */
+    onCommunication(dshId, rpc) {
+        const link = this.links.get(dshId);
+        const pending = link?.pendingHuman;
+        if (link === undefined || pending === undefined || pending.kind !== 'ask' || pending.id !== rpc.id || pending.communication === undefined) {
+            // 服务器按「第一个注册者」投递 RPC：另一个 happy-bridge 实例（或多端
+            // 登录的旧进程）抢先注册同一会话时，答复会被送到没有提问的那一边。
+            this.log(`收到无法匹配的表单答复 id=${rpc.id}（旧卡片，或另一个实例抢走了本会话的 RPC）`);
+            return;
         }
-        link.socket.updateState({
-            controlledByUser: grantAtLeast(this.config.remoteGrant, 'chat'),
-            requests,
-        });
+        if (rpc.status !== 'answered' || rpc.answers === undefined) {
+            // App 发消息后会顺手取消挂起的表单（SessionView 的 dismissal），全屏
+            // 表单的「取消」也走这里。取消不等于放弃提问：保留挂起状态，让随后
+            // 到达的输入框文本作为 custom 答案，与 permission 通道行为一致。
+            pending.deferred ??= {};
+            this.completeCommunication(link, rpc.id, pending.communication, 'cancelled');
+            return;
+        }
+        pending.resolve({ answers: answersFromCommunication(rpc.answers, pending.questions) });
+        delete link.pendingHuman;
+        this.completeCommunication(link, rpc.id, pending.communication, 'answered', rpc.answers);
+        link.socket.sendToolEnd(rpc.id);
     }
-    clearRequest(link, id, status) {
-        link.socket.updateState({
+    /**
+     * Publish the agentState snapshot: the pending approval / question plus
+     * every completed entry. The App zod-validates the whole snapshot and
+     * blanks it on any malformed entry, so completed entries must always carry
+     * the full original request shape.
+     */
+    pushAgentState(link) {
+        const pending = link.pendingHuman;
+        const communication = pending?.kind === 'ask' ? pending.communication : undefined;
+        const request = pending === undefined || communication !== undefined ? undefined : pending.request;
+        link.socket.updateState(agentStateSnapshot({
             controlledByUser: grantAtLeast(this.config.remoteGrant, 'chat'),
-            requests: {},
-            completedRequests: {
-                [id]: { status, completedAt: Date.now() },
-            },
+            ...(pending === undefined ? {} : { pendingId: pending.id }),
+            ...(communication === undefined ? {} : { pendingCommunication: communication }),
+            ...(request === undefined ? {} : { pendingRequest: request }),
+            completedRequests: link.completedRequests,
+            completedCommunications: link.completedCommunications,
+        }));
+    }
+    /**
+     * Complete a permission request: keep the original entry fields (the App
+     * schema rejects completed entries without `tool`/`arguments` — that used
+     * to blank the whole snapshot and leave every card stuck `pending`), add
+     * the outcome, then republish the snapshot.
+     */
+    clearRequest(link, id, status, request, reason) {
+        rememberCompleted(link.completedRequests, id, {
+            ...request,
+            completedAt: Date.now(),
+            status,
+            ...(reason === undefined ? {} : { reason }),
         });
+        this.pushAgentState(link);
+    }
+    /** Record a finished communications form and republish the snapshot. */
+    completeCommunication(link, id, communication, status, answers) {
+        rememberCompleted(link.completedCommunications, id, {
+            ...communication,
+            completedAt: Date.now(),
+            status,
+            ...(answers === undefined ? {} : { answers }),
+        });
+        this.pushAgentState(link);
     }
     async pushMetadata(link) {
         if (this.credentials === undefined)
@@ -1687,10 +1779,14 @@ export class HappyBridge {
         }, this.credentials.machineId, sessionLabel(events), link.agent === undefined ? undefined : this.currentModel(link.agent), this.config.remoteGrant);
         link.socket.updateMetadata(metadata);
         const pick = catalogModelPick(metadata);
+        const previousPick = this.lastPublished.get(link.dshId);
         if (pick === undefined)
             this.lastPublished.delete(link.dshId);
         else
             this.lastPublished.set(link.dshId, pick);
+        if (pick === undefined || sameCatalogPick(previousPick, pick) === false) {
+            this.log(`发布目录：模型 ${pick?.model ?? '（无）'} 思考 ${String(pick?.effort ?? '（无）')}`);
+        }
     }
     pushAllMetadata() {
         for (const link of this.links.values()) {

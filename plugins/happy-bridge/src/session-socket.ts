@@ -5,9 +5,9 @@ import { createEnvelope, type SessionEnvelope, type SessionEvent as HappyEvent }
 import { io, type Socket } from 'socket.io-client'
 import { HAPPY_CLIENT } from './happy-version.ts'
 import { decryptB64, encryptB64, type CryptoContext } from './encryption.ts'
-import { parseHappyInbound, parsePermissionRpc, type HappyInbound } from './inbound.ts'
+import { parseCommunicationRpc, parseHappyInbound, parsePermissionRpc, type HappyInbound } from './inbound.ts'
 import { registerRpc, requestRpcRegister } from './rpc.ts'
-import type { PermissionRpc } from './types.ts'
+import type { CommunicationRpc, PermissionRpc } from './types.ts'
 
 /** Callbacks the bridge installs on one Happy session. */
 export interface SessionHandlers {
@@ -15,6 +15,8 @@ export interface SessionHandlers {
   onInbound: (message: InboundMessage) => void
   /** Phone answered a permission / fake-tool request. */
   onPermission: (rpc: PermissionRpc) => void
+  /** Phone answered or cancelled a communications-channel form. */
+  onCommunication: (rpc: CommunicationRpc) => void
   /** Phone tapped Stop. Happy App `sessionAbort` for Rig sends `{}`. */
   onAbort: () => void
   /** App archived or deleted this Happy session. */
@@ -114,6 +116,11 @@ export class HappySessionSocket {
       return { ok: true }
     }, this.handlers.log)
     this.rpcMethods.push(`${this.happySessionId}:permission`)
+    await registerRpc(socket, this.happySessionId, 'communication', this.crypto, (params) => {
+      this.handlers.onCommunication(parseCommunicationRpc(params))
+      return { ok: true }
+    }, this.handlers.log)
+    this.rpcMethods.push(`${this.happySessionId}:communication`)
     await registerRpc(socket, this.happySessionId, 'abort', this.crypto, () => {
       this.handlers.onAbort()
       return { ok: true }

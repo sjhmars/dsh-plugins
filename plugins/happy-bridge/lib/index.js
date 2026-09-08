@@ -74,6 +74,42 @@ async function revealOnHarness(registry, sessionId) {
 		});
 	});
 }
+/**
+* Insert or refresh a completed entry with FIFO eviction. Re-answering an id
+* moves it back to newest; the oldest entry falls off the cap.
+* @param map - per-link completed map.
+* @param id - Happy request / communication id.
+* @param entry - schema-valid completed entry.
+*/
+function rememberCompleted(map, id, entry) {
+	map.delete(id);
+	map.set(id, entry);
+	while (map.size > 50) {
+		const oldest = map.keys().next().value;
+		if (oldest === void 0) break;
+		map.delete(oldest);
+	}
+}
+/** Plain-object view of a completed map for the encrypted snapshot. */
+function snapshotMap(map) {
+	return Object.fromEntries(map);
+}
+/**
+* Build the full agentState snapshot pushed with `update-state`. The pending
+* approval or question sits in `requests` / `communications`; every completed
+* entry rides along so App-side replays keep the answered card states.
+* @param input - pending id + entries, the completed maps, and the grant flag.
+* @returns the plaintext agentState object.
+*/
+function agentStateSnapshot(input) {
+	return {
+		controlledByUser: input.controlledByUser,
+		requests: input.pendingId === void 0 || input.pendingRequest === void 0 ? {} : { [input.pendingId]: input.pendingRequest },
+		communications: input.pendingId === void 0 || input.pendingCommunication === void 0 ? {} : { [input.pendingId]: input.pendingCommunication },
+		completedRequests: snapshotMap(input.completedRequests ?? /* @__PURE__ */ new Map()),
+		completedCommunications: snapshotMap(input.completedCommunications ?? /* @__PURE__ */ new Map())
+	};
+}
 //#endregion
 //#region lib/types/happy-version.js
 /**
@@ -211,7 +247,8 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 		value: name,
 		description: name === "danger-full-access" ? "不限制文件，且不再询问批准" : "只能改当前工作区，危险工具要批准"
 	}));
-	const selected = resolveSelection(models, selection);
+	const selected = resolvePublishedSelection(models, selection);
+	const publishedModels = selected === void 0 || models.some((model) => model.providerId === selected.row.providerId && model.id === selected.row.id) ? models : [selected.row, ...models];
 	const thoughtLevels = selected?.row.effortOptions;
 	const thought = selected === void 0 ? void 0 : selected.effort ?? selected.row.defaultThinkingLevel;
 	return {
@@ -235,7 +272,7 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 		happyToolsDir: VIRTUAL_HOME,
 		slashCommands,
 		skills,
-		models,
+		models: publishedModels,
 		operatingModes,
 		client: {
 			id: "rig",
@@ -267,11 +304,12 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 			resume: false,
 			rpcMethods: [
 				"permission",
+				"communication",
 				"killSession",
 				"abort"
 			],
 			shell: false,
-			steering: false
+			steering: true
 		},
 		currentOperatingModeCode: currentPreset === "custom" ? operatingModes[0]?.code ?? "workspace-write" : currentPreset,
 		...selected === void 0 ? {} : {
@@ -292,16 +330,46 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 		}
 	};
 }
-function resolveSelection(models, selection) {
+/**
+* Pick the Happy catalog row that matches Host selection.
+* A known Host pick that is missing from the listed rows stays that pick
+* (synthetic row) instead of falling back to `models[0]` (usually DeepSeek V4).
+* @param models - rows advertised to the App.
+* @param selection - current Host provider/model/effort, when known.
+* @returns the row to publish, plus effort when the Host named one.
+*/
+function resolvePublishedSelection(models, selection) {
 	if (selection !== void 0) {
 		const row = models.find((model) => model.providerId === selection.provider && model.id === selection.model) ?? models.find((model) => model.code === `${selection.provider}/${selection.model}`);
 		if (row !== void 0) return {
 			row,
 			...selection.reasoningEffort === void 0 ? {} : { effort: selection.reasoningEffort }
 		};
+		return {
+			row: syntheticHappyRow(selection),
+			...selection.reasoningEffort === void 0 ? {} : { effort: selection.reasoningEffort }
+		};
 	}
 	const first = models[0];
 	return first === void 0 ? void 0 : { row: first };
+}
+function syntheticHappyRow(selection) {
+	const effort = selection.reasoningEffort;
+	return {
+		code: `${selection.provider}/${selection.model}`,
+		value: selection.model,
+		id: selection.model,
+		name: selection.model,
+		providerId: selection.provider,
+		providerKind: "custom",
+		providerName: selection.provider,
+		thinkingLevels: effort === void 0 ? [] : [effort],
+		effortOptions: effort === void 0 ? [] : [{
+			code: effort,
+			value: effort
+		}],
+		...effort === void 0 ? {} : { defaultThinkingLevel: effort }
+	};
 }
 function listCommands(ctx, agent) {
 	const commands = ctx.get("commands");
@@ -1068,6 +1136,22 @@ function sameCatalogPick(previous, next) {
 	if (previous === void 0) return false;
 	return catalogPickKey(previous) === catalogPickKey(next);
 }
+/**
+* Whether inbound `meta.model` is the pick we last published.
+* The App often echoes only `currentModelCode` (bare id) on a chat line,
+* while we publish `provider:id`; treating that as a user switch would
+* lock the web composer onto the catalog default (DeepSeek V4).
+* @param published - last pick we wrote, if any.
+* @param inbound - model code from the inbound message.
+* @returns true when the inbound model is our own echo.
+*/
+function isPublishedModelEcho(published, inbound) {
+	if (published?.model === void 0) return false;
+	if (sameCatalogPick({ model: published.model }, { model: inbound })) return true;
+	const publishedSplit = splitModelCode(published.model);
+	const inboundSplit = splitModelCode(inbound);
+	return inboundSplit.provider === "" && inboundSplit.model === publishedSplit.model;
+}
 function catalogPickKey(pick) {
 	const split = pick.model === void 0 ? void 0 : splitModelCode(pick.model);
 	return `${split === void 0 ? "" : split.provider === "" ? split.model : `${split.provider}/${split.model}`}\0${pick.effort === void 0 ? "" : pick.effort === null ? "null" : pick.effort}`;
@@ -1529,9 +1613,10 @@ function wakeModelSelection(primary, ...fallbacks) {
 	};
 }
 /**
-* Effort the first phone-spawn / phone-wake request should send.
+* Effort the first web / phone-spawn / phone-wake request should send.
 * Current pick wins; otherwise a preferred (web) value or the model's
 * advertised default, but only when the model lists that id.
+* Written onto the Host picker via `selectModel`; requests then read that bar.
 * @param currentEffort - already chosen effort, if any.
 * @param preferred - web picker effort to reuse when the model accepts it.
 * @param modelDefault - `resolveModelInfo().reasoning.defaultEffort`.
@@ -1663,19 +1748,6 @@ function answersFromHappy(answers, questions) {
 	});
 }
 /**
-* Fill every still-open question with the typed chat line as `custom`.
-* @param questions - harness questions in order.
-* @param text - the App composer line.
-* @returns one answer row per question.
-*/
-function customAnswersFromText(questions, text) {
-	return questions.map((question) => ({
-		id: question.id,
-		selected: [],
-		custom: text
-	}));
-}
-/**
 * The option label that declines a plan-review question.
 * @param question - first question of a plan-review `ask`.
 * @returns the non-approve option label, or Keep planning.
@@ -1705,6 +1777,100 @@ function parsePermissionRpc(params) {
 	const mapped = {};
 	for (const [key, value] of Object.entries(answers)) if (typeof value === "string") mapped[key] = value;
 	result.updatedInput = { answers: mapped };
+	return result;
+}
+/**
+* Synthetic last option the bridge appends to every question: the App's inline
+* form has no free-text input, so "custom answer" is a two-tap flow — pick
+* this option, then type the real answer in the composer.
+*/
+const CUSTOM_ANSWER_LABEL = "✏️ 自定义…";
+/**
+* Merge composer text with a deferred (marker-picked) submission.
+* - No deferred selections: the text becomes `custom` for every question
+*   (the original "type while waiting" behavior).
+* - With deferred selections: real options are kept per question; questions
+*   that picked the marker — and questions never answered — take the text
+*   as `custom`.
+* @param questions - harness questions in order.
+* @param text - the composer line.
+* @param deferred - per-question submitted options, keyed by question id.
+* @returns one answer row per question.
+*/
+function mergeCustomAnswers(questions, text, deferred) {
+	return questions.map((question) => {
+		const selected = deferred?.[question.id];
+		if (selected === void 0) return {
+			id: question.id,
+			selected: [],
+			custom: text
+		};
+		const real = selected.filter((option) => option !== CUSTOM_ANSWER_LABEL);
+		const marked = real.length !== selected.length;
+		return {
+			id: question.id,
+			selected: real,
+			...!marked && real.length > 0 ? {} : { custom: text }
+		};
+	});
+}
+/**
+* Translate a web-side harness answer batch into Happy communications answers
+* so the phone card shows the same choice instead of a cancelled form.
+* @param answers - harness answer rows from the web composer.
+* @returns answers keyed by question id.
+*/
+function communicationAnswersFromWeb(answers) {
+	return Object.fromEntries(answers.map((row) => [row.id, {
+		options: row.selected,
+		...row.custom === void 0 || row.custom === "" ? {} : { custom: row.custom }
+	}]));
+}
+/**
+* Translate Happy communications answers (`{ [question id]: { options, custom } }`)
+* into harness answer rows. Options become `selected`; free text becomes `custom`.
+* @param answers - communication RPC answers keyed by question id.
+* @param questions - original harness questions in order.
+* @returns one answer row per question.
+*/
+function answersFromCommunication(answers, questions) {
+	return questions.map((question) => {
+		const answer = answers?.[question.id];
+		if (answer === void 0) return {
+			id: question.id,
+			selected: []
+		};
+		return {
+			id: question.id,
+			selected: answer.options,
+			...answer.custom === void 0 ? {} : { custom: answer.custom }
+		};
+	});
+}
+/**
+* Decode a Happy `communication` RPC body (form answers or cancellation).
+* Unknown statuses degrade to `cancelled`, which re-asks instead of silently
+* submitting empty answers.
+* @param params - decrypted RPC params.
+* @returns id, form kind, answered/cancelled status, and per-question answers.
+*/
+function parseCommunicationRpc(params) {
+	const record = asUnknownRecord(params);
+	const result = {
+		id: typeof record.id === "string" ? record.id : "",
+		kind: typeof record.kind === "string" && record.kind !== "" ? record.kind : "form",
+		status: record.status === "answered" ? "answered" : "cancelled"
+	};
+	if (!isUnknownRecord(record.answers)) return result;
+	const answers = {};
+	for (const [key, value] of Object.entries(record.answers)) {
+		if (!isUnknownRecord(value)) continue;
+		answers[key] = {
+			options: Array.isArray(value.options) ? value.options.filter((option) => typeof option === "string") : [],
+			...typeof value.custom === "string" && value.custom !== "" ? { custom: value.custom } : {}
+		};
+	}
+	result.answers = answers;
 	return result;
 }
 function asUnknownRecord(value) {
@@ -2328,6 +2494,11 @@ var HappySessionSocket = class {
 			return { ok: true };
 		}, this.handlers.log);
 		this.rpcMethods.push(`${this.happySessionId}:permission`);
+		await registerRpc(socket, this.happySessionId, "communication", this.crypto, (params) => {
+			this.handlers.onCommunication(parseCommunicationRpc(params));
+			return { ok: true };
+		}, this.handlers.log);
+		this.rpcMethods.push(`${this.happySessionId}:communication`);
 		await registerRpc(socket, this.happySessionId, "abort", this.crypto, () => {
 			this.handlers.onAbort();
 			return { ok: true };
@@ -2650,8 +2821,6 @@ var HappyBridge = class {
 	lastPublished = /* @__PURE__ */ new Map();
 	/** Count of in-flight phone-originated Host `selectModel` calls. */
 	hostSelectFromPhone = 0;
-	/** Per-agent selection installed on phone wake / spawn, matching Host `selectionFor`. */
-	selections = /* @__PURE__ */ new WeakMap();
 	/** In-flight phone wakes, so two inbound texts do not double-resume. */
 	waking = /* @__PURE__ */ new Map();
 	/** Phone stop-session / archive: do not recreate these Happy rows. */
@@ -2662,6 +2831,10 @@ var HappyBridge = class {
 	lastArchivedIds = /* @__PURE__ */ new Set();
 	/** Serialize phone text so two messages cannot split one attachment batch. */
 	inboundTail = /* @__PURE__ */ new Map();
+	/** One Host-picker pin per live Agent, awaited before the first prompt assembly. */
+	hostPin = /* @__PURE__ */ new WeakMap();
+	/** Agents that already prepend the pin onto `system-prompt/assemble`. */
+	assemblePinBound = /* @__PURE__ */ new WeakSet();
 	error;
 	running = false;
 	scanTimer;
@@ -2846,6 +3019,7 @@ var HappyBridge = class {
 				this.wakePhone(existing, true);
 				return;
 			}
+			this.watchFirstAssemble(agent);
 			if (isBlankSession(agent.session.events) && !this.phoneSpawned.has(agent.id)) return;
 			this.mirrorAgent(agent).then(() => {
 				if (this.isHarnessArchived(agent.id)) this.parkPhoneSession(agent.id);
@@ -2923,7 +3097,7 @@ var HappyBridge = class {
 						text: "当前没有已选模型"
 					};
 					if (id === "") {
-						this.rememberModel(invocation.agent, {
+						await this.rememberModel(invocation.agent, {
 							provider: current.provider,
 							model: current.model
 						});
@@ -2932,7 +3106,7 @@ var HappyBridge = class {
 							text: "推理档已恢复为模型默认"
 						};
 					}
-					this.rememberModel(invocation.agent, {
+					await this.rememberModel(invocation.agent, {
 						provider: current.provider,
 						model: current.model,
 						reasoningEffort: ReasoningEffortId(id)
@@ -3087,6 +3261,7 @@ var HappyBridge = class {
 			if (session.header.id !== link.dshId) return;
 			this.onSessionEvent(link, event);
 		}, { global: true });
+		this.watchFirstAssemble(agent);
 	}
 	/** Copy log events newer than {@link Link.lastForwardedSeq} onto Happy. */
 	drainNewEvents(link, agent) {
@@ -3142,14 +3317,15 @@ var HappyBridge = class {
 			resumeSessionId: SessionId(link.dshId),
 			setup
 		});
-		await this.ensurePinnedEffort(handle.agent);
+		await this.watchFirstAssemble(handle.agent);
 		const current = this.links.get(link.dshId);
 		if (current !== void 0) this.attachAgent(current, handle.agent);
 		return handle.agent;
 	}
 	/**
-	* Resume/create composition matching Host `composeAgent`: install model
-	* selection, then mount the preset when a roster exists.
+	* Resume/create composition matching Host `composeAgent`: mount the preset
+	* when a roster exists. Model selection is the Host picker, landed by
+	* `selectModel` in {@link watchFirstAssemble} / {@link rememberModel}.
 	* @param presetHint - logged or requested preset id; omitted uses the roster default.
 	*/
 	async composeAgentSetup(presetHint) {
@@ -3157,70 +3333,8 @@ var HappyBridge = class {
 		let resolvedId;
 		if (presets !== void 0) resolvedId = (await presets.resolve(presetHint)).id;
 		return async (agentCtx) => {
-			this.installWakeSelection(agentCtx);
 			if (presets !== void 0 && resolvedId !== void 0) await presets.mount(agentCtx, resolvedId);
 		};
-	}
-	/**
-	* Same lazy selection Host `selectionFor` installs: remembered pick, else
-	* the session's last `request/header`, else `agentDefaultModel`. A missing
-	* thinking level keeps the web picker's effort when it is the same model.
-	* Unlike Host `installModelSelection`, an absent effort does not clear
-	* inherited thinking.
-	*/
-	installWakeSelection(agentCtx) {
-		const agent = agentCtx.agent;
-		if (agent === void 0) throw new Error("happy-bridge: agent setup has no scoped agent");
-		if (this.selections.has(agent)) return;
-		let picked;
-		const bridge = this;
-		const selection = {
-			get current() {
-				if (picked !== void 0) return picked;
-				return bridge.currentModel(agent);
-			},
-			set current(next) {
-				picked = next;
-			},
-			assembled: void 0
-		};
-		this.bindWakeSelection(agentCtx, selection);
-		this.selections.set(agent, selection);
-		const current = selection.current;
-		if (current === void 0) return;
-		const existing = this.models.get(agent.id);
-		if (existing === void 0 || existing.reasoningEffort === void 0 && current.reasoningEffort !== void 0) this.models.set(agent.id, current);
-	}
-	/**
-	* Pin provider/model for a phone-woken agent without wiping thinking when
-	* the selection names no effort.
-	*/
-	bindWakeSelection(agentCtx, selection) {
-		agentCtx.on("system-prompt/assemble", async (_assembly, _context, next) => {
-			const selected = selection.current;
-			const assembled = await next();
-			selection.assembled = selected;
-			if (selected === void 0) return assembled;
-			return {
-				...assembled,
-				variables: {
-					...assembled.variables,
-					provider: selected.provider,
-					model: selected.model
-				}
-			};
-		});
-		agentCtx.on("agent/request", async (_payload, next) => {
-			const resolved = await next();
-			const selected = selection.assembled;
-			if (selected === void 0) return resolved;
-			return {
-				...resolved,
-				provider: selected.provider,
-				model: selected.model,
-				...selected.reasoningEffort === void 0 ? {} : { reasoningEffort: selected.reasoningEffort }
-			};
-		});
 	}
 	/** Host default model, when the web profile mounted `agentDefaultModel`. */
 	defaultModelSelection() {
@@ -3306,10 +3420,11 @@ var HappyBridge = class {
 		const socket = new HappySessionSocket(sessionId, credentials.token, this.config.serverUrl, crypto, {
 			onInbound: (message) => this.queueInbound(agent.id, message),
 			onPermission: (rpc) => this.onPermission(agent.id, rpc),
+			onCommunication: (rpc) => this.onCommunication(agent.id, rpc),
 			onAbort: () => this.onPhoneAbort(agent.id),
 			onArchived: () => this.onPhoneArchive(sessionId, agent.id),
 			onResumed: () => this.onPhoneRestore(agent.id),
-			onCatalog: (meta) => this.applyPhoneCatalog(agent.id, meta),
+			onCatalog: (meta) => this.queuePhoneCatalog(agent.id, meta),
 			log: this.log
 		});
 		try {
@@ -3337,10 +3452,13 @@ var HappyBridge = class {
 			cwd,
 			events: [],
 			lastForwardedSeq: lastEventSeq(agent.session.events),
-			parked: false
+			parked: false,
+			completedRequests: /* @__PURE__ */ new Map(),
+			completedCommunications: /* @__PURE__ */ new Map()
 		};
 		this.links.set(agent.id, link);
 		this.happyToDsh.set(sessionId, agent.id);
+		await this.watchFirstAssemble(agent);
 		await this.pushMetadata(link);
 		if (seq === 0) await this.replayHistory(link);
 		this.log(`已镜像会话 ${agent.id} → Happy ${sessionId}（seq=${seq}）`);
@@ -3372,10 +3490,11 @@ var HappyBridge = class {
 		const socket = new HappySessionSocket(created.id, credentials.token, this.config.serverUrl, crypto, {
 			onInbound: (message) => this.queueInbound(dshId, message),
 			onPermission: (rpc) => this.onPermission(dshId, rpc),
+			onCommunication: (rpc) => this.onCommunication(dshId, rpc),
 			onAbort: () => this.onPhoneAbort(dshId),
 			onArchived: () => this.onPhoneArchive(created.id, dshId),
 			onResumed: () => this.onPhoneRestore(dshId),
-			onCatalog: (meta) => this.applyPhoneCatalog(dshId, meta),
+			onCatalog: (meta) => this.queuePhoneCatalog(dshId, meta),
 			log: this.log
 		});
 		try {
@@ -3403,6 +3522,8 @@ var HappyBridge = class {
 			events: stored.events,
 			lastForwardedSeq: -1,
 			parked: false,
+			completedRequests: /* @__PURE__ */ new Map(),
+			completedCommunications: /* @__PURE__ */ new Map(),
 			...stored.headerAgentPreset === void 0 ? {} : { headerAgentPreset: stored.headerAgentPreset }
 		};
 		this.links.set(dshId, link);
@@ -3578,8 +3699,8 @@ var HappyBridge = class {
 			});
 			await (this.ctx.get("workspaceRegistry")?.list().find((item) => item.path === real))?.attachSession(sessionId);
 			this.phoneSpawned.add(handle.agent.id);
-			this.applySpawnMeta(handle.agent, options);
-			await this.ensurePinnedEffort(handle.agent);
+			await this.applySpawnMeta(handle.agent, options);
+			await this.watchFirstAssemble(handle.agent);
 			await this.mirrorAgent(handle.agent, options.sessionId);
 			return {
 				type: "success",
@@ -3592,13 +3713,18 @@ var HappyBridge = class {
 			};
 		}
 	}
-	applySpawnMeta(agent, options) {
-		if (options.modelMode !== void 0) this.applyModel(agent, options.modelMode, options.effortLevel);
-		else if (options.effortLevel !== void 0) this.applyEffort(agent, options.effortLevel);
+	async applySpawnMeta(agent, options) {
+		if (options.modelMode !== void 0) await this.applyModel(agent, options.modelMode, options.effortLevel);
+		else if (options.effortLevel !== void 0) await this.applyEffort(agent, options.effortLevel);
 		if (options.permissionMode !== void 0) this.applyPermission(agent, options.permissionMode, true);
 	}
 	queueInbound(dshId, message) {
 		const next = (this.inboundTail.get(dshId) ?? Promise.resolve()).then(() => this.onInbound(dshId, message), () => this.onInbound(dshId, message));
+		this.inboundTail.set(dshId, next);
+	}
+	/** Same queue as inbound text, so a catalog switch lands on the bar before the next send. */
+	queuePhoneCatalog(dshId, meta) {
+		const next = (this.inboundTail.get(dshId) ?? Promise.resolve()).then(() => this.applyPhoneCatalog(dshId, meta), () => this.applyPhoneCatalog(dshId, meta));
 		this.inboundTail.set(dshId, next);
 	}
 	async onInbound(dshId, message) {
@@ -3620,16 +3746,21 @@ var HappyBridge = class {
 		const files = await this.drainPhoneFiles(link);
 		const pending = link.pendingHuman;
 		if (pending?.kind === "ask") {
-			pending.resolve({ answers: customAnswersFromText(pending.questions, message.text) });
+			const answers = mergeCustomAnswers(pending.questions, message.text, pending.deferred);
+			pending.resolve({ answers });
 			delete link.pendingHuman;
-			this.clearRequest(link, pending.id, "canceled");
+			if (pending.communication !== void 0) this.completeCommunication(link, pending.id, pending.communication, "answered", Object.fromEntries(answers.map((row) => [row.id, {
+				options: row.selected,
+				...row.custom === void 0 ? {} : { custom: row.custom }
+			}])));
+			else this.clearRequest(link, pending.id, "canceled", pending.request);
 			link.socket.sendToolEnd(pending.id);
 			return;
 		}
 		if (pending?.kind === "plan-review") {
 			pending.reject(new UserQuestionError("the user cancelled ask_user_question", "ASK_CANCELLED"));
 			delete link.pendingHuman;
-			this.clearRequest(link, pending.id, "canceled");
+			this.clearRequest(link, pending.id, "canceled", pending.request);
 			link.socket.sendToolEnd(pending.id);
 		}
 		if (!grantAtLeast(this.config.remoteGrant, "chat")) {
@@ -3645,7 +3776,6 @@ var HappyBridge = class {
 			return;
 		}
 		const { agent } = ensured;
-		await this.ensurePinnedEffort(agent);
 		const names = new Set((this.ctx.get("commands")?.list(agent) ?? []).map((command) => command.name));
 		const kind = classifyInboundText(message.text, names);
 		await this.applyMessageMeta(current, agent, message.meta, kind === "command");
@@ -3666,45 +3796,49 @@ var HappyBridge = class {
 		const model = messageModelCode(meta);
 		const effort = messageEffort(meta);
 		const permissionMode = meta.permissionMode;
-		if (model !== void 0) {
+		const published = this.lastPublished.get(agent.id);
+		const modelIsEcho = model !== void 0 && isPublishedModelEcho(published, model);
+		const effortIsEcho = effort !== void 0 && published?.effort != null && effort === published.effort;
+		if (model !== void 0 && !modelIsEcho) {
 			if (!grantAtLeast(this.config.remoteGrant, "full")) link.socket.sendText("service", "改模型需要远程档「完整」，这条消息仍会发出。");
-			else this.applyModel(agent, model, typeof effort === "string" ? effort : effort === null ? null : void 0);
-		} else if (effort === null || typeof effort === "string") {
+			else await this.applyModel(agent, model, typeof effort === "string" ? effort : effort === null ? null : void 0);
+		} else if ((effort === null || typeof effort === "string") && !effortIsEcho) {
 			if (!grantAtLeast(this.config.remoteGrant, "full")) link.socket.sendText("service", "改思考强度需要远程档「完整」，这条消息仍会发出。");
 			else if (effort === null) {
 				const current = this.currentModel(agent);
-				if (current !== void 0) this.rememberModel(agent, {
+				if (current !== void 0) await this.rememberModel(agent, {
 					provider: current.provider,
 					model: current.model
 				});
-			} else this.applyEffort(agent, effort);
+			} else await this.applyEffort(agent, effort);
 		}
 		if (typeof permissionMode === "string" && permissionMode !== "") this.applyPermission(agent, permissionMode, isCommand);
 	}
-	applyPhoneCatalog(dshId, meta) {
+	async applyPhoneCatalog(dshId, meta) {
 		if (!grantAtLeast(this.config.remoteGrant, "full")) return;
 		const pick = catalogModelPick(meta);
 		if (pick === void 0) return;
 		const published = this.lastPublished.get(dshId);
 		if (published === void 0 || sameCatalogPick(published, pick)) return;
+		this.log(`手机模型选择 ${pick.model ?? ""}${pick.effort ?? ""}（上次发布 ${published.model ?? "无"}），准备应用`);
 		const link = this.links.get(dshId);
 		const agent = link === void 0 ? void 0 : this.requireAgent(link);
 		if (agent === void 0) return;
 		if (pick.model !== void 0) {
-			this.applyModel(agent, pick.model, pick.effort);
+			await this.applyModel(agent, pick.model, pick.effort);
 			return;
 		}
 		if (pick.effort === null) {
 			const current = this.currentModel(agent);
-			if (current !== void 0) this.rememberModel(agent, {
+			if (current !== void 0) await this.rememberModel(agent, {
 				provider: current.provider,
 				model: current.model
 			});
 			return;
 		}
-		if (typeof pick.effort === "string") this.applyEffort(agent, pick.effort);
+		if (typeof pick.effort === "string") await this.applyEffort(agent, pick.effort);
 	}
-	applyModel(agent, code, effort) {
+	async applyModel(agent, code, effort) {
 		const split = splitModelCode(code);
 		const current = this.currentModel(agent);
 		const provider = split.provider === "" ? current?.provider ?? "" : split.provider;
@@ -3716,24 +3850,25 @@ var HappyBridge = class {
 			model: split.model,
 			...reasoningEffort === void 0 ? {} : { reasoningEffort }
 		};
-		this.rememberModel(agent, next);
+		await this.rememberModel(agent, next);
 	}
-	applyEffort(agent, effort) {
+	async applyEffort(agent, effort) {
 		const current = this.currentModel(agent);
 		if (current === void 0) return;
-		this.rememberModel(agent, {
+		await this.rememberModel(agent, {
 			...current,
 			reasoningEffort: ReasoningEffortId(effort)
 		});
 	}
-	/** Keep the last Host pick so Happy metadata can echo the web composer. */
-	rememberModel(agent, next) {
-		const previous = this.models.get(agent.id);
+	/**
+	* Remember a phone-originated pick and land it on the Host picker before
+	* the next request. `onHostModelSelected` is skipped while this runs, so
+	* {@link models} is written here.
+	*/
+	async rememberModel(agent, next) {
+		if (sameModelOverride(this.models.get(agent.id), next)) return;
 		this.models.set(agent.id, next);
-		const selection = this.selections.get(agent);
-		if (selection !== void 0) selection.current = next;
-		if (sameModelOverride(previous, next)) return;
-		this.syncHostSelection(agent, next);
+		await this.syncHostSelection(agent, next);
 	}
 	/**
 	* Write the web picker's Host selection (`sessionController.selectModel`) so
@@ -3764,6 +3899,7 @@ var HappyBridge = class {
 	*/
 	onHostModelSelected(sessionId, selection) {
 		if (this.hostSelectFromPhone) return;
+		this.log(`网页选模型 ${selection.provider}/${selection.model}${selection.reasoningEffort ?? ""}，同步到手机`);
 		const next = {
 			provider: selection.provider,
 			model: selection.model,
@@ -3771,16 +3907,36 @@ var HappyBridge = class {
 		};
 		this.models.set(sessionId, next);
 		const link = this.links.get(sessionId);
-		const agent = link?.agent;
-		if (agent !== void 0) {
-			const current = this.selections.get(agent);
-			if (current !== void 0) current.current = next;
-		}
 		if (link !== void 0 && !link.parked) this.pushMetadata(link);
 	}
 	/**
-	* Put a concrete reasoningEffort on a phone-spawned / phone-woken agent
-	* before the first LLM request, matching the effort Happy metadata advertises.
+	* Land explicit effort on the Host picker and wait for that pin before this
+	* Agent's first prompt assembly, so the request reads the web bar.
+	* @param agent - live agent whose picker should carry explicit effort.
+	*/
+	watchFirstAssemble(agent) {
+		const pending = this.pinHostPicker(agent);
+		if (this.assemblePinBound.has(agent)) return pending;
+		this.assemblePinBound.add(agent);
+		agent.ctx.on("system-prompt/assemble", async (_assembly, _context, next) => {
+			await this.pinHostPicker(agent);
+			return next();
+		}, { prepend: true });
+		return pending;
+	}
+	pinHostPicker(agent) {
+		const existing = this.hostPin.get(agent);
+		if (existing !== void 0) return existing;
+		const pending = this.ensurePinnedEffort(agent);
+		this.hostPin.set(agent, pending);
+		return pending;
+	}
+	/**
+	* Write a concrete reasoningEffort onto the Host picker so the next request
+	* reads the web bar. Always lands via `selectModel`: phone resume/spawn have
+	* no Host interceptor until then, and a live web agent with no conversation
+	* effort would otherwise send the first call without thinking.
+	* @param agent - live agent whose picker should carry explicit effort.
 	*/
 	async ensurePinnedEffort(agent) {
 		const current = this.currentModel(agent);
@@ -3794,14 +3950,13 @@ var HappyBridge = class {
 			if (reasoning?.efforts !== void 0 && reasoning.efforts.length > 0) supported = reasoning.efforts.map((effort) => effort.id);
 		} catch {}
 		const effort = pinWakeEffort(current.reasoningEffort, preferred, modelDefault, supported);
-		if (effort === void 0 || effort === current.reasoningEffort) return;
 		const next = {
-			...current,
-			reasoningEffort: ReasoningEffortId(effort)
+			provider: current.provider,
+			model: current.model,
+			...effort === void 0 ? {} : { reasoningEffort: ReasoningEffortId(effort) }
 		};
 		this.models.set(agent.id, next);
-		const selection = this.selections.get(agent);
-		if (selection !== void 0) selection.current = next;
+		await this.syncHostSelection(agent, next);
 	}
 	applyPermission(agent, mode, fromCommand) {
 		const presets = this.ctx.get("permissionPresets");
@@ -3829,6 +3984,9 @@ var HappyBridge = class {
 	* Queue the phone text as a user followup. The App already shows the typed
 	* bubble; do not send a second user envelope. Images ride as DSH
 	* attachments; other files land under `happy-inbox` for Harness `read`.
+	* A turn that is still running gets the text as steering (`agent.steer`),
+	* matching the `steering: true` capability we advertise — otherwise the
+	* App unlocks the composer only to have the message wait a whole turn.
 	*/
 	async followup(link, agent, text, files) {
 		const blocks = [];
@@ -3853,10 +4011,12 @@ var HappyBridge = class {
 		if (blocks.length === 0) return;
 		link.skipNextUser += 1;
 		link.agent = agent;
-		agent.followup(createUserMessage({
+		const message = createUserMessage({
 			content: blocks,
 			source: { kind: "user" }
-		}));
+		});
+		if (agent.status === "running" && link.pendingHuman === void 0) agent.steer(message);
+		else agent.followup(message);
 	}
 	/**
 	* Claim every download started before this text, wait, keep the successes.
@@ -3981,11 +4141,14 @@ var HappyBridge = class {
 			kind: "approval",
 			id,
 			toolName: req.toolName,
-			happyName: card.name,
-			arguments: card.args,
+			request: {
+				tool: card.name,
+				arguments: card.args,
+				createdAt: Date.now()
+			},
 			resolve: resolvePhone
 		};
-		this.pushRequests(link);
+		this.pushAgentState(link);
 		link.socket.keepAliveNow(true);
 		const web = next().then((outcome) => ({
 			src: "web",
@@ -4000,8 +4163,9 @@ var HappyBridge = class {
 		})), web]);
 		if (winner.src === "phone") controller.abort();
 		if (winner.src === "web" && link.pendingHuman?.kind === "approval" && link.pendingHuman.id === id) {
+			const pending = link.pendingHuman;
 			delete link.pendingHuman;
-			this.clearRequest(link, id, winner.outcome === "allowed-once" ? "approved" : "canceled");
+			this.clearRequest(link, id, winner.outcome === "allowed-once" ? "approved" : "canceled", pending.request);
 		}
 		if (link.agent?.status === "running") link.socket.keepAliveNow(true);
 		return winner.outcome;
@@ -4021,6 +4185,11 @@ var HappyBridge = class {
 				link.pendingHuman = {
 					kind: "plan-review",
 					id,
+					request: {
+						tool: "exit_plan_mode",
+						arguments: { plan },
+						createdAt: Date.now()
+					},
 					resolve,
 					reject,
 					approveLabel: first.intent.approve,
@@ -4028,30 +4197,75 @@ var HappyBridge = class {
 					questionId: first.id
 				};
 				link.socket.sendToolStart(id, "exit_plan_mode", { plan }, "审阅计划", "审阅计划");
-				this.pushRequests(link);
+				this.pushAgentState(link);
 				return;
 			}
 			const id = `ask-${createLocalId()}`;
-			link.pendingHuman = {
-				kind: "ask",
-				id,
-				resolve,
-				reject,
-				questions: request.questions.map((question) => ({
+			const hint = "（自定义回答：直接在下方聊天输入框输入并发送）";
+			const questions = request.questions.map((question, index) => ({
+				id: question.id,
+				question: index === 0 ? `${question.question}\n${hint}` : question.question
+			}));
+			if (this.config.questionChannel === "communications") {
+				const form = request.questions.map((question, index) => ({
 					id: question.id,
-					question: question.question
-				}))
-			};
-			link.socket.sendToolStart(id, "AskUserQuestion", { questions: request.questions.map((question) => ({
-				question: question.question,
+					header: question.header ?? question.question.slice(0, 24),
+					question: questions[index]?.question ?? question.question,
+					options: (question.options ?? []).map((option) => ({
+						label: option.label,
+						...option.description === void 0 ? {} : { description: option.description }
+					})),
+					multiSelect: question.multiSelect === true,
+					allowCustom: true,
+					required: true
+				}));
+				const communication = {
+					kind: "form",
+					createdAt: Date.now(),
+					toolUseId: id,
+					title: "需要你回答",
+					form: { questions: form }
+				};
+				link.pendingHuman = {
+					kind: "ask",
+					id,
+					request: {
+						tool: "request_user_input",
+						arguments: { questions: form },
+						createdAt: communication.createdAt
+					},
+					communication,
+					resolve,
+					reject,
+					questions
+				};
+				link.socket.sendToolStart(id, "request_user_input", { questions: form }, "需要你回答", "需要你回答");
+				this.pushAgentState(link);
+				return;
+			}
+			const arguments_ = { questions: request.questions.map((question, index) => ({
+				question: questions[index]?.question ?? question.question,
 				header: question.header ?? question.question.slice(0, 24),
 				options: (question.options ?? []).map((option) => ({
 					label: option.label,
 					description: option.description ?? ""
 				})),
 				multiSelect: question.multiSelect === true
-			})) }, "需要你回答", "需要你回答");
-			this.pushRequests(link);
+			})) };
+			link.pendingHuman = {
+				kind: "ask",
+				id,
+				request: {
+					tool: "AskUserQuestion",
+					arguments: arguments_,
+					createdAt: Date.now()
+				},
+				resolve,
+				reject,
+				questions
+			};
+			link.socket.sendToolStart(id, "AskUserQuestion", arguments_, "需要你回答", "需要你回答");
+			this.pushAgentState(link);
 		});
 		const web = original.call(questions, {
 			...request,
@@ -4064,10 +4278,12 @@ var HappyBridge = class {
 			controller.abort();
 			throw error;
 		}), web.then((answer) => {
-			if (link.pendingHuman !== void 0) {
-				this.clearRequest(link, link.pendingHuman.id, "canceled");
-				link.socket.sendToolEnd(link.pendingHuman.id);
+			const pending = link.pendingHuman;
+			if (pending !== void 0) {
 				delete link.pendingHuman;
+				if (pending.kind === "ask" && pending.communication !== void 0) this.completeCommunication(link, pending.id, pending.communication, "answered", communicationAnswersFromWeb(answer.answers));
+				else this.clearRequest(link, pending.id, "approved", pending.request);
+				link.socket.sendToolEnd(pending.id);
 			}
 			return answer;
 		})]);
@@ -4086,17 +4302,21 @@ var HappyBridge = class {
 	onPermission(dshId, rpc) {
 		const link = this.links.get(dshId);
 		const pending = link?.pendingHuman;
-		if (link === void 0 || pending === void 0 || pending.id !== rpc.id) return;
+		if (link === void 0 || pending === void 0 || pending.id !== rpc.id) {
+			this.log(`收到无法匹配的审批答复 id=${rpc.id}（旧卡片，或另一个实例抢走了本会话的 RPC）`);
+			return;
+		}
 		if (pending.kind === "approval") {
 			if (rpc.approved) {
 				if (rpc.decision === "approved_for_session") link.alwaysAllow.add(pending.toolName);
 				pending.resolve("allowed-once");
-				this.clearRequest(link, rpc.id, "approved");
+				delete link.pendingHuman;
+				this.clearRequest(link, rpc.id, "approved", pending.request);
 			} else {
 				pending.resolve("rejected");
-				this.clearRequest(link, rpc.id, "denied");
+				delete link.pendingHuman;
+				this.clearRequest(link, rpc.id, "denied", pending.request);
 			}
-			delete link.pendingHuman;
 			return;
 		}
 		if (pending.kind === "plan-review") {
@@ -4105,15 +4325,15 @@ var HappyBridge = class {
 				id: pending.questionId,
 				selected: [selected]
 			}] });
-			this.clearRequest(link, rpc.id, rpc.approved ? "approved" : "denied");
 			delete link.pendingHuman;
+			this.clearRequest(link, rpc.id, rpc.approved ? "approved" : "denied", pending.request);
 			link.socket.sendToolEnd(rpc.id);
 			return;
 		}
 		if (!rpc.approved) {
 			pending.reject(/* @__PURE__ */ new Error("ASK_ABORTED"));
-			this.clearRequest(link, rpc.id, "denied");
 			delete link.pendingHuman;
+			this.clearRequest(link, rpc.id, "denied", pending.request);
 			link.socket.sendToolEnd(rpc.id);
 			return;
 		}
@@ -4122,44 +4342,74 @@ var HappyBridge = class {
 			id: row.id,
 			selected: row.selected
 		})) });
-		this.clearRequest(link, rpc.id, "approved");
 		delete link.pendingHuman;
+		this.clearRequest(link, rpc.id, "approved", pending.request);
 		link.socket.sendToolEnd(rpc.id);
 	}
-	pushRequests(link) {
-		const pending = link.pendingHuman;
-		const requests = {};
-		if (pending !== void 0) {
-			if (pending.kind === "approval") requests[pending.id] = {
-				tool: pending.happyName,
-				arguments: pending.arguments,
-				createdAt: Date.now()
-			};
-			else if (pending.kind === "plan-review") requests[pending.id] = {
-				tool: "exit_plan_mode",
-				arguments: {},
-				createdAt: Date.now()
-			};
-			else requests[pending.id] = {
-				tool: "AskUserQuestion",
-				arguments: {},
-				createdAt: Date.now()
-			};
+	/**
+	* Answered / cancelled a communications form. Swap the pending form for a
+	* completed one so the App card keeps showing the user's choice verbatim.
+	*/
+	onCommunication(dshId, rpc) {
+		const link = this.links.get(dshId);
+		const pending = link?.pendingHuman;
+		if (link === void 0 || pending === void 0 || pending.kind !== "ask" || pending.id !== rpc.id || pending.communication === void 0) {
+			this.log(`收到无法匹配的表单答复 id=${rpc.id}（旧卡片，或另一个实例抢走了本会话的 RPC）`);
+			return;
 		}
-		link.socket.updateState({
-			controlledByUser: grantAtLeast(this.config.remoteGrant, "chat"),
-			requests
-		});
+		if (rpc.status !== "answered" || rpc.answers === void 0) {
+			pending.deferred ??= {};
+			this.completeCommunication(link, rpc.id, pending.communication, "cancelled");
+			return;
+		}
+		pending.resolve({ answers: answersFromCommunication(rpc.answers, pending.questions) });
+		delete link.pendingHuman;
+		this.completeCommunication(link, rpc.id, pending.communication, "answered", rpc.answers);
+		link.socket.sendToolEnd(rpc.id);
 	}
-	clearRequest(link, id, status) {
-		link.socket.updateState({
+	/**
+	* Publish the agentState snapshot: the pending approval / question plus
+	* every completed entry. The App zod-validates the whole snapshot and
+	* blanks it on any malformed entry, so completed entries must always carry
+	* the full original request shape.
+	*/
+	pushAgentState(link) {
+		const pending = link.pendingHuman;
+		const communication = pending?.kind === "ask" ? pending.communication : void 0;
+		const request = pending === void 0 || communication !== void 0 ? void 0 : pending.request;
+		link.socket.updateState(agentStateSnapshot({
 			controlledByUser: grantAtLeast(this.config.remoteGrant, "chat"),
-			requests: {},
-			completedRequests: { [id]: {
-				status,
-				completedAt: Date.now()
-			} }
+			...pending === void 0 ? {} : { pendingId: pending.id },
+			...communication === void 0 ? {} : { pendingCommunication: communication },
+			...request === void 0 ? {} : { pendingRequest: request },
+			completedRequests: link.completedRequests,
+			completedCommunications: link.completedCommunications
+		}));
+	}
+	/**
+	* Complete a permission request: keep the original entry fields (the App
+	* schema rejects completed entries without `tool`/`arguments` — that used
+	* to blank the whole snapshot and leave every card stuck `pending`), add
+	* the outcome, then republish the snapshot.
+	*/
+	clearRequest(link, id, status, request, reason) {
+		rememberCompleted(link.completedRequests, id, {
+			...request,
+			completedAt: Date.now(),
+			status,
+			...reason === void 0 ? {} : { reason }
 		});
+		this.pushAgentState(link);
+	}
+	/** Record a finished communications form and republish the snapshot. */
+	completeCommunication(link, id, communication, status, answers) {
+		rememberCompleted(link.completedCommunications, id, {
+			...communication,
+			completedAt: Date.now(),
+			status,
+			...answers === void 0 ? {} : { answers }
+		});
+		this.pushAgentState(link);
 	}
 	async pushMetadata(link) {
 		if (this.credentials === void 0) return;
@@ -4174,8 +4424,10 @@ var HappyBridge = class {
 		}, this.credentials.machineId, sessionLabel(events), link.agent === void 0 ? void 0 : this.currentModel(link.agent), this.config.remoteGrant);
 		link.socket.updateMetadata(metadata);
 		const pick = catalogModelPick(metadata);
+		const previousPick = this.lastPublished.get(link.dshId);
 		if (pick === void 0) this.lastPublished.delete(link.dshId);
 		else this.lastPublished.set(link.dshId, pick);
+		if (pick === void 0 || sameCatalogPick(previousPick, pick) === false) this.log(`发布目录：模型 ${pick?.model ?? "（无）"} 思考 ${String(pick?.effort ?? "（无）")}`);
 	}
 	pushAllMetadata() {
 		for (const link of this.links.values()) if (!link.parked) this.pushMetadata(link);
@@ -4521,7 +4773,8 @@ const Config = Schema.object({
 		Schema.const("chat"),
 		Schema.const("approve"),
 		Schema.const("full")
-	]).default("approve")
+	]).default("approve"),
+	questionChannel: Schema.union([Schema.const("communications"), Schema.const("permission")]).default("communications")
 });
 /**
 * Mount the Host half: settings namespace, Typert Remote, Happy relay.

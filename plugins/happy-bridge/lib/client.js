@@ -17,21 +17,21 @@ window.__ModuleLoader__.load({
 			document.head.appendChild(tag);
 		}
 		var HappyBridgeCard_module_css_default = {
+			"card": "l9rBEq_card",
+			"description": "l9rBEq_description",
 			"status": "l9rBEq_status",
-			"qr": "l9rBEq_qr",
-			"select": "l9rBEq_select",
-			"row": "l9rBEq_row",
+			"headText": "l9rBEq_headText",
 			"name": "l9rBEq_name",
 			"body": "l9rBEq_body",
-			"label": "l9rBEq_label",
-			"header": "l9rBEq_header",
-			"chevron": "l9rBEq_chevron",
 			"checkbox": "l9rBEq_checkbox",
-			"card": "l9rBEq_card",
-			"headText": "l9rBEq_headText",
-			"button": "l9rBEq_button",
 			"error": "l9rBEq_error",
-			"description": "l9rBEq_description"
+			"row": "l9rBEq_row",
+			"label": "l9rBEq_label",
+			"chevron": "l9rBEq_chevron",
+			"select": "l9rBEq_select",
+			"qr": "l9rBEq_qr",
+			"header": "l9rBEq_header",
+			"button": "l9rBEq_button"
 		};
 		//#endregion
 		//#region src/client/HappyBridgeCard.tsx

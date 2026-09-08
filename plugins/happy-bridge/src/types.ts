@@ -3,6 +3,9 @@
 /** Remote-control depth the phone is allowed on this Host. */
 export type RemoteGrant = 'watch' | 'chat' | 'approve' | 'full'
 
+/** Transport for harness `ask_user_question` on the phone. */
+export type QuestionChannel = 'communications' | 'permission'
+
 /** Validated plugin config. */
 export interface Config {
   /** Master switch. */
@@ -17,6 +20,13 @@ export interface Config {
   pairOnStart: boolean
   /** How deeply the phone may control this Host. */
   remoteGrant: RemoteGrant
+  /**
+   * Which Happy channel carries questions. `communications` is the App's form
+   * channel (options plus a free-text answer, with the choice echoed back on
+   * the card); `permission` is the legacy AskUserQuestion fallback for older
+   * App builds.
+   */
+  questionChannel: QuestionChannel
 }
 
 /** Encryption variant stored with the account credentials. */
@@ -106,4 +116,65 @@ export interface PermissionRpc {
   updatedInput?: {
     answers?: Record<string, string>
   }
+}
+
+/** One question published on the Happy communications channel. */
+export interface HappyFormQuestion {
+  /** Harness question id; the App echoes it back as the answer key. */
+  id: string
+  header: string
+  question: string
+  options: { label: string; description?: string }[]
+  multiSelect: boolean
+  /** Lets the user write an answer the options did not offer. */
+  allowCustom: boolean
+  required: boolean
+}
+
+/** Pending communications entry published through agentState.communications. */
+export interface HappyCommunicationEntry {
+  kind: 'form'
+  createdAt: number
+  /** Equals the `request_user_input` tool-call id so the App joins the form to its card. */
+  toolUseId: string
+  title: string
+  form: { questions: HappyFormQuestion[] }
+}
+
+/**
+ * Completed communications entry. The App renders `answers` verbatim on the
+ * card ("header: chosen labels / custom text"), which is the answer echo.
+ */
+export interface HappyCompletedCommunication extends HappyCommunicationEntry {
+  completedAt: number
+  status: 'answered' | 'cancelled'
+  answers?: Record<string, { options: string[]; custom?: string }>
+}
+
+/**
+ * Pending permission request entry, shaped like the official CLI's
+ * `requests[id] = { tool, arguments, createdAt }`.
+ */
+export interface HappyRequestEntry {
+  tool: string
+  arguments: Record<string, unknown>
+  createdAt: number
+}
+
+/**
+ * Completed permission request entry. The App's zod schema requires `tool`
+ * (and reads `arguments`); an entry without them blanks the whole agentState.
+ */
+export interface HappyCompletedRequest extends HappyRequestEntry {
+  completedAt: number
+  status: 'approved' | 'denied' | 'canceled'
+  reason?: string
+}
+
+/** Happy `communication` RPC body from the App. */
+export interface CommunicationRpc {
+  id: string
+  kind: string
+  status: 'answered' | 'cancelled'
+  answers?: Record<string, { options: string[]; custom?: string }>
 }
