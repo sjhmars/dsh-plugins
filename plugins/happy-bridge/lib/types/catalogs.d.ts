@@ -1,6 +1,7 @@
 /** Build Happy session metadata catalogs from the live harness context. */
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Context } from '@deepseek-ai/cordis';
+import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { RemoteGrant } from './types.ts';
 /** One model row Happy's Rig picker understands (slash `code` plus provider/id). */
 export interface HappyModelRow {
@@ -108,6 +109,7 @@ export interface SessionMetadata {
  * @returns plaintext metadata.
  */
 export declare function buildSessionMetadata(ctx: Context, source: {
+    sessionId: SessionId;
     cwd: string;
     /** POSIX path under {@link VIRTUAL_HOME}; Happy groups the list by this. */
     happyPath: string;
@@ -116,6 +118,7 @@ export declare function buildSessionMetadata(ctx: Context, source: {
         data: unknown;
     }[];
     agent?: Agent;
+    archived?: boolean;
 }, machineId: string, title: string, selection: HappySelection | undefined, _grant: RemoteGrant): Promise<SessionMetadata>;
 /**
  * Pick the Happy catalog row that matches Host selection.

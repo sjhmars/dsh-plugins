@@ -1,5 +1,2 @@
-/** Inert stub for @deepseek-ai/dsh-attachment (only used outside tested paths). */
-
-export const admitEncodedImages = () => {
-  throw new Error('stub: admitEncodedImages is not available in tests')
-}
+/** Delegates image admission to the fixture-owned attachment service. */
+export const admitEncodedImages = (store, images) => store.admitEncodedImages(images)

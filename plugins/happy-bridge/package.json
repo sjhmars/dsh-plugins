@@ -1,6 +1,6 @@
 {
   "name": "@sjhmars/happy-bridge",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Remote-control bridge: pair a running dsh web/desktop client with the Happy mobile app by QR code, then remote-control the same harness sessions from the phone (send messages, read replies, approve tool calls, switch models)",
   "keywords": [
     "deepseek-harness",
@@ -20,15 +20,19 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
-    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
-    "lib/invariant.js",
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml"
@@ -36,16 +40,23 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown -c tsdown.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --experimental-strip-types --experimental-test-isolation=none --import ./tests/peer-stubs/register.mjs --test tests/*.test.ts"
+    "test": "node --experimental-transform-types --experimental-test-isolation=none --import ./tests/peer-stubs/register.mjs --test tests/*.test.ts"
   },
   "license": "MIT",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "disclosure": {
     "cloud": true,
-    "network": ["api.cluster-fluster.com"],
+    "network": [
+      "api.cluster-fluster.com"
+    ],
     "offlineMode": false,
     "apiKeys": [],
-    "permissions": ["file-system:credentials", "network:happy-relay"],
+    "permissions": [
+      "file-system:credentials",
+      "network:happy-relay"
+    ],
     "jurisdiction": [],
     "retention": "credentials"
   },
@@ -55,28 +66,29 @@
     "directory": "plugins/happy-bridge"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=0.1.0-rc.5",
-    "@deepseek-ai/schemastery": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-attachment": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-api-session-controller": ">=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-commands": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-permission-presets": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-skill": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-user-approval": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-user-questions": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.5",
-    "react": "^18.2.0"
+    "@deepseek-ai/cordis": ">=4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": ">=3.18.5-alpha.1",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-attachment": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-commands": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-permission-presets": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-settings": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-skill": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-user-approval": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-user-questions": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-workspace": ">=0.2.1-alpha.1",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-query": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.2.1-alpha.1"
   },
   "dependencies": {
     "@paralleldrive/cuid2": "^2.2.2",
@@ -92,15 +104,39 @@
     "lightningcss": "^1.32.0",
     "react": "^18.3.1",
     "tsdown": "^0.22.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@deepseek-ai/cordis": "link:../../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/schemastery": "link:../../../deepseek-harness/vendor/schemastery",
+    "@deepseek-ai/dsh-agent": "link:../../../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-attachment": "link:../../../deepseek-harness/packages/attachment/attachment",
+    "@deepseek-ai/dsh-api-session-controller": "link:../../../deepseek-harness/packages/api/session-controller",
+    "@deepseek-ai/dsh-client-connection": "link:../../../deepseek-harness/packages/client/connection",
+    "@deepseek-ai/dsh-client-locale": "link:../../../deepseek-harness/packages/client/locale",
+    "@deepseek-ai/dsh-client-ui-slots": "link:../../../deepseek-harness/packages/client/ui-slots",
+    "@deepseek-ai/dsh-commands": "link:../../../deepseek-harness/packages/interaction/commands",
+    "@deepseek-ai/dsh-llm": "link:../../../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-permission-presets": "link:../../../deepseek-harness/packages/interaction/permission-presets",
+    "@deepseek-ai/dsh-session": "link:../../../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-settings": "link:../../../deepseek-harness/packages/settings/settings",
+    "@deepseek-ai/dsh-skill": "link:../../../deepseek-harness/packages/skill/skill",
+    "@deepseek-ai/dsh-typert-protocol": "link:../../../deepseek-harness/packages/typert/protocol",
+    "@deepseek-ai/dsh-user-approval": "link:../../../deepseek-harness/packages/interaction/user-approval",
+    "@deepseek-ai/dsh-user-questions": "link:../../../deepseek-harness/packages/interaction/user-questions",
+    "@deepseek-ai/dsh-workspace": "link:../../../deepseek-harness/packages/workspace/workspace",
+    "@deepseek-ai/dsh-client-ui-settings": "link:../../../deepseek-harness/packages/client/ui-settings",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "link:../../../deepseek-harness/packages/client/ui-plugin-manager",
+    "@deepseek-ai/dsh-session-query": "link:../../../deepseek-harness/packages/session-query/session-query",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:../../../deepseek-harness/packages/client/ui-renderer"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings-plugins"
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
       ],
       "platform": "web"
     }

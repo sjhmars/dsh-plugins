@@ -1,23 +1,23 @@
-/** Browser half: Happy remote card on Settings → Plugins. */
+/** Browser half: Happy remote configuration on its Plugins bundle page. */
 import { HappyBridgeCard, } from "./HappyBridgeCard.js";
 import { en, NS, zh } from "./locales.js";
 /** Required client services. */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope'];
+export const inject = ['slots', 'locale', 'connection', 'remote', 'configForms'];
 /**
- * Register the Happy remote card under the `happy-bridge` settings namespace.
+ * Register the Happy remote page using its Loader entry configuration.
  * @param ctx - browser plugin context.
  */
 export function apply(ctx) {
     const connection = ctx.get('connection');
-    const scope = ctx.settingsScope.bind({ namespace: 'happy-bridge' });
+    const scope = ctx.configForms.get('happy-bridge');
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'happy-bridge: browser dictionaries');
     const rpc = async (method) => {
         const result = await connection.rpc.call('/api', `happyBridge/${method}`, { args: {} });
         return unwrap(result);
     };
-    ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-        name: 'settings.plugin.item',
-        key: 'happy-bridge',
+    ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+        name: 'plugins.bundle.config',
+        key: '@sjhmars/happy-bridge',
         locale: NS,
         inject: () => ({
             getStatus: () => rpc('getStatus'),

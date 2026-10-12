@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconChevronDownOutline14, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineMedium, IconRefreshOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { EditorInfo } from '../types.ts'
@@ -93,7 +93,7 @@ export function EditorPicker({ listEditors, refreshEditors, t }: EditorPickerPro
       label: '',
       icon: (
         <span role="img" aria-label={t('menu.refresh')} title={t('menu.refresh')}>
-          <IconRefreshOutline14 size={14} />
+          <IconRefreshOutlineMedium size={14} />
         </span>
       ),
     },
@@ -128,7 +128,7 @@ export function EditorPicker({ listEditors, refreshEditors, t }: EditorPickerPro
           onClick={() => { setOpen(value => !value) }}
         >
           <span>{label}</span>
-          <IconChevronDownOutline14 size={12} />
+          <IconChevronDownOutlineMedium size={12} />
         </button>
       )}
     />

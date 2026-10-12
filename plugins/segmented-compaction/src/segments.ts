@@ -1,9 +1,8 @@
 /** Ordered message grouping and lossless text slicing for auxiliary summaries. */
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, RequestMessage, RequestUserInput } from '@deepseek-ai/dsh-llm'
 
 export interface Unit {
-  messages: Message[]
+  messages: RequestMessage[]
   source: string
 }
 export interface Piece {
@@ -12,13 +11,13 @@ export interface Piece {
   offset: number
 }
 /** Synthetic history is data, never an executable tool invocation. */
-export function historyMessage(content: ContentBlock[]): Message {
-  return createUserMessage({ content, source: { kind: 'plugin', plugin: 'segmented-compaction' } })
+export function historyMessage(content: ContentBlock[]): RequestUserInput {
+  return { role: 'user', content }
 }
 /** Group calls and their results without splitting a pending call set. */
-export function groupMessages(messages: readonly Message[]): Unit[] {
+export function groupMessages(messages: readonly RequestMessage[]): Unit[] {
   const units: Unit[] = []
-  let batch: Message[] = []
+  let batch: RequestMessage[] = []
   let start = 0
   const pending = new Set<string>()
   for (const [index, message] of messages.entries()) {
@@ -27,9 +26,10 @@ export function groupMessages(messages: readonly Message[]): Unit[] {
       if (block.type === 'tool-call') {
         if (pending.has(block.id)) throw new Error('Duplicate pending tool call: ' + block.id)
         pending.add(block.id)
-      } else if (block.type === 'tool-result') {
-        if (!pending.delete(block.toolCallId)) throw new Error('Unpaired tool result: ' + block.toolCallId)
       }
+    }
+    if (message.role === 'tool' && !pending.delete(message.toolCallId)) {
+      throw new Error('Unpaired tool result: ' + message.toolCallId)
     }
     if (pending.size === 0) {
       units.push({ messages: batch, source: 'messages ' + start + '..' + index })
@@ -44,11 +44,7 @@ export function groupMessages(messages: readonly Message[]): Unit[] {
 export function fragmentUnit(unit: Unit): Piece[] {
   const pieces: Piece[] = []
   const visit = (block: ContentBlock, source: string): void => {
-    if (block.type === 'tool-result') {
-      const label = source + ' result ' + block.toolCallId + ' isError=' + String(block.isError ?? false)
-      pieces.push({ block: { type: 'text', text: label }, source: label, offset: 0 })
-      block.content.forEach((child, index) => visit(child, label + ' block ' + index))
-    } else if (block.type === 'tool-call') {
+    if (block.type === 'tool-call') {
       pieces.push({
         block: { type: 'text', text: block.arguments },
         source: source + ' tool ' + block.name + ' call ' + block.id + ' raw arguments', offset: 0,
@@ -59,6 +55,10 @@ export function fragmentUnit(unit: Unit): Piece[] {
   }
   unit.messages.forEach((message, index) => {
     const source = unit.source + ' member ' + index + ' role=' + message.role
+    if (message.role === 'tool') {
+      const label = source + ' result ' + message.toolCallId + ' isError=' + String(message.isError ?? false)
+      pieces.push({ block: { type: 'text', text: label }, source: label, offset: 0 })
+    }
     if (message.content.length === 0) pieces.push({ block: { type: 'text', text: '(empty message)' }, source, offset: 0 })
     message.content.forEach((block, blockIndex) => visit(block, source + ' block ' + blockIndex + ' type=' + block.type))
   })
@@ -77,7 +77,7 @@ export function splitLength(text: string, limit: number): number {
   return boundary
 }
 /** The marker identifies literal historical data and exact UTF-16 source offsets. */
-export function pieceMessage(piece: Piece, length?: number): Message {
+export function pieceMessage(piece: Piece, length?: number): RequestUserInput {
   const block = piece.block
   const textual = block.type === 'text' || block.type === 'reasoning'
   const size = textual ? length ?? block.text.length : 0

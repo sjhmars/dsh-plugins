@@ -3,22 +3,42 @@
  * with Happy App so the phone drives the same harness sessions.
  * @module @sjhmars/happy-bridge
  */
-import type { Context } from '@deepseek-ai/cordis';
+import type { Context, Volatile } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import type { Config as HappyBridgeConfig } from './types.ts';
 export type { Config as HappyBridgeConfig, PairingStatus, RemoteGrant } from './types.ts';
 /** Cordis plugin name. */
 export declare const name = "happy-bridge";
-/** Settings namespace keyed by the Plugins tab card. */
-export declare const HAPPY_BRIDGE_NS: import("@deepseek-ai/dsh-settings").SettingsNamespace;
+/** Loader entry id used by the Plugins configuration page. */
+export declare const HAPPY_BRIDGE_NS = "happy-bridge";
 /** Wait for the agent registry before mirroring sessions. */
 export declare const inject: string[];
-/** Validated plugin config. Illegal values fail at load. */
-export declare const Config: Schema<HappyBridgeConfig>;
+/** Live references supplied by the Loader for this plugin instance. */
+export type Config = {
+    [K in keyof HappyBridgeConfig]: Volatile<HappyBridgeConfig[K]>;
+};
+/** Validate editable fields before committing their live references. */
+export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
+    enabled: Schema<boolean, boolean, "volatile-defined">;
+    serverUrl: Schema<string, string, "volatile-defined">;
+    appUrl: Schema<string, string, "volatile-defined">;
+    credentialDir: Schema<string, string, "volatile-defined">;
+    pairOnStart: Schema<boolean, boolean, "volatile-defined">;
+    remoteGrant: Schema<"watch" | "chat" | "approve" | "full", "watch" | "chat" | "approve" | "full", "volatile-defined">;
+    questionChannel: Schema<"communications" | "permission", "communications" | "permission", "volatile-defined">;
+}>>, Schemastery.ObjectT<NoInfer<{
+    enabled: Schema<boolean, boolean, "volatile-defined">;
+    serverUrl: Schema<string, string, "volatile-defined">;
+    appUrl: Schema<string, string, "volatile-defined">;
+    credentialDir: Schema<string, string, "volatile-defined">;
+    pairOnStart: Schema<boolean, boolean, "volatile-defined">;
+    remoteGrant: Schema<"watch" | "chat" | "approve" | "full", "watch" | "chat" | "approve" | "full", "volatile-defined">;
+    questionChannel: Schema<"communications" | "permission", "communications" | "permission", "volatile-defined">;
+}>>, "plain">;
 /**
- * Mount the Host half: settings namespace, Typert Remote, Happy relay.
+ * Mount the Typert Remote and Happy relay; live Config edits update the running bridge.
  * @param ctx - Host context.
  * @param config - composition entry config.
  */
-export declare function apply(ctx: Context, config: HappyBridgeConfig): void;
+export declare function apply(ctx: Context, config: Config): void;
 //# sourceMappingURL=index.d.ts.map

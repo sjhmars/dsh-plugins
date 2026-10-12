@@ -12,6 +12,16 @@
 
 Shows a desktop notification when an agent finishes a task, when a tool asks you to allow or deny, or when the agent asks you a question. One Host plugin for Web and Desktop; no browser Notification permission.
 
+## 兼容版本 / Compatibility
+
+0.1.3 适配 Harness 0.2.1-alpha.1。任务结束和提问通知通过 sessionQuery.readSession 读取已提交日志；卸载插件会取消尚未完成读取后的投递。提问使用官方 user-questions/request waterfall 并委托原答复流程；无需 invariant companion。
+
+Version 0.1.3 targets Harness 0.2.1-alpha.1. Idle and question notifications read committed history through sessionQuery.readSession. Unloading suppresses delivery after pending reads. Questions use the official waterfall and delegate answering; no invariant companion is required.
+
+构建后运行 pnpm run test:compat，验证摘要、标题、运行中加载、卸载、提问委托和审批按钮。测试替身处理系统通知，实际 Windows、Electron 和 macOS 弹窗需另行验收。
+
+Run pnpm run test:compat after building. It checks summaries, titles, loading during a task, unloading, question delegation and approval buttons through a native-notifier double. Native Windows, Electron and macOS popups require separate verification.
+
 ## 你会看见什么 / What you see
 
 - **任务结束**：系统通知。标题是「任务已完成」一类，正文是最近一段回复的预览。
@@ -34,7 +44,7 @@ Shows a desktop notification when an agent finishes a task, when a tool asks you
 - **消费者**
   - `agent/status`：先 `running` 再 `idle` 视为一段任务结束（不是每一次 `turn/end`）。
   - `approval/request` waterfall（`prepend`）：Harness 要出黄框的同一时刻先出卡片。点了两个按钮就短路裁决；关掉或超时再 `next()` 出黄框。
-  - 包一层 `userQuestions.ask`：覆盖 `ask_user_question` 和计划审阅。不注册第二套提问 provider。
+  - `user-questions/request` waterfall：通知同时调用 `next()`，覆盖 `ask_user_question` 和计划审阅。
 
 ## 配置 / Config
 
@@ -61,12 +71,14 @@ Shows a desktop notification when an agent finishes a task, when a tool asks you
 
 ## 安装 / Install
 
-发布到 npm 之后用**包名**安装，不要把本仓库目录 link 进 profile：
+安装入口和 profile 的区别见 [仓库安装说明](../../README.md#install)。Web 安装 0.1.3；以下命令在 Windows CMD 中执行：
 
-```sh
-dsh plugin --profile web add @sjhmars/task-notify
-dsh plugin --profile desktop add @sjhmars/task-notify
+```bat
+cd /d H:\deepseek-harness
+pnpm dsh plugin --profile web add @sjhmars/task-notify@0.1.3 --registry=https://registry.npmjs.org
 ```
+
+Desktop 通过应用内「插件 → 添加插件」安装；命令行需要 Desktop 注册的 `dsh`，完全退出应用后再执行。CLI 安装或更新后重启对应应用。未发布的构建可使用仓库 release 目录中的 `.tgz`。
 
 ## 本地联调 / Local overlay
 
@@ -80,7 +92,7 @@ pnpm --filter @sjhmars/task-notify run build
 **Web：** `--patch` 必须写在 `--port` 前面。本机 overlay 文件是 `dev.cordis.yml`（含这台电脑的路径，不进 git）：
 
 ```sh
-node apps/cli/lib/bin.js web --patch H:\dsh-plugin\plugins\task-notify\dev.cordis.yml --port 3080
+pnpm dsh --profile web --patch H:\dsh-plugin\plugins\task-notify\dev.cordis.yml --port 3080
 ```
 
 在 harness 仓库里也可以：`pnpm dsh web --patch H:\dsh-plugin\plugins\task-notify\dev.cordis.yml --port 3080`。

@@ -14,7 +14,7 @@ Recover an original basic-compaction request only after a classified context ove
 
 ## 设置
 
-Web/Desktop 共用客户端设置入口：设置 → 插件 → 分段压缩。支持中文和英文。保存影响下一次恢复；当前恢复使用配置快照。模型窗口和原压缩触发阈值不会被修改。
+Web/Desktop 共用客户端设置入口：侧栏插件 → @sjhmars/segmented-compaction → 分段压缩。配置通过 Loader volatile 字段和 configForms 保存到当前 profile 的 cordis.patch.yml。支持中文和英文。保存影响下一次恢复；当前恢复使用配置快照。模型窗口和原压缩触发阈值不会被修改。
 
 | 字段 | 默认 | 含义 |
 |---|---:|---|
@@ -35,36 +35,36 @@ Web/Desktop 共用客户端设置入口：设置 → 插件 → 分段压缩。�
 
 ## 开发与兼容
 
-本次验证使用相邻 Harness checkout `cd5ef81481` 的已构建公开包。需要 Node 22.23.2 或更新的受支持 Node，以及当前的 llm/stream、tokenMeter、settingsScope、客户端 slots/locale API。package.json 的版本下限不是所有历史 alpha 构建的兼容证明；特别需要拆分后的 dsh-client-ui-settings 和 dsh-client-ui-renderer。Desktop 使用同一 Web 客户端模块，但本次没有启动独立 Desktop 壳验证。
+0.1.3 要求 Harness 0.2.1-alpha.1 或更新版本。使用相邻官方 checkout 的公开包，依赖 llm/stream、tokenMeter、Loader volatile Config、configForms 和 Plugins bundle 配置页。恢复识别当前 Agent 拥有的 BasicCompactionEngine，通过 compaction/start 和 compaction/end 跟踪原事务；摘要指令采用 request-only user 输入，工具结果使用 tool 消息。Desktop 使用同一客户端模块，独立桌面壳未做本次验证。
 
 ```powershell
 cd H:\dsh-plugin\plugins\segmented-compaction
-node scripts/prepare-dev.mjs
+pnpm install --ignore-scripts
 node scripts/build.mjs --check
 node scripts/build.mjs
 node --import ./tests/register.mjs --test tests/*.test.mjs
 npm pack --ignore-scripts --pack-destination .artifacts
 ```
 
-prepare-dev 只在插件自己的 node_modules 建立开发依赖链接。默认读取相邻 deepseek-harness 已构建的公开包，可用 HARNESS_ROOT 指向其他 checkout。不修改 Harness、preset 或运行中 profile。测试通过公开服务加载真实 BasicCompactionEngine，模型适配器使用合成响应，私人会话不作为夹具。
+开发依赖通过 link: 指向相邻 deepseek-harness 已构建的公开包。测试通过公开服务加载真实 BasicCompactionEngine，模型适配器使用合成响应；覆盖手动、自动、并发恢复及取消和卸载。仓库根的 npm run test:compat 验证实际 Loader 设置保存和构建客户端配置页。
 
 `dev/cordis.patch.yml` 使用此机器的绝对 file URL，可在其他机器修改该 URL。用独立 DSH_HOME、DSH_AGENTS_HOME 和空工作区启动；--patch 放在应用参数之前：
 
 ```powershell
 $env:DSH_HOME = 'H:/dsh-plugin/plugins/segmented-compaction/.artifacts/home'
 $env:DSH_AGENTS_HOME = 'H:/dsh-plugin/plugins/segmented-compaction/.artifacts/agents'
-node H:/deepseek-harness/apps/cli/lib/bin.js --profile web --patch H:/dsh-plugin/plugins/segmented-compaction/dev/cordis.patch.yml --port 3197 --no-open
+pnpm --dir H:/deepseek-harness dsh --profile web --patch H:/dsh-plugin/plugins/segmented-compaction/dev/cordis.patch.yml --port 3197 --no-open
 ```
 
 真实模型连接须通过隔离环境的正常设置/凭据配置提供。不要将凭据或 .artifacts 提交到版本库。
 
 ## 安装
 
-当前交付为源码和本地 tarball，尚未发布 npm，也未安装到用户运行的 profile。开发验证使用上述 overlay。发布后可按目标 profile 安装：
+0.1.3 已发布 npm。安装入口和 profile 的区别见 [仓库安装说明](../../README.md#install)。Web 从官方源码仓库安装；以下命令在 Windows CMD 中执行：
 
-```powershell
-dsh plugin --profile web add @sjhmars/segmented-compaction
-dsh plugin --profile desktop add @sjhmars/segmented-compaction
+```bat
+cd /d H:\deepseek-harness
+pnpm dsh plugin --profile web add @sjhmars/segmented-compaction@0.1.3 --registry=https://registry.npmjs.org
 ```
 
-Web 与 Desktop 是两个独立 profile。CLI 安装后重启相应应用，客户端刷新后查看设置卡。
+Desktop 通过应用内「插件 → 添加插件」安装；命令行需要 Desktop 注册的 `dsh`，完全退出应用后再执行。Web 与 Desktop 是两个独立 profile，CLI 安装或更新后重启相应应用，再到插件详情页查看分段压缩配置。

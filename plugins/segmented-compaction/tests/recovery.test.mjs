@@ -5,8 +5,10 @@ import { defaults, validateConfig } from '../src/config.ts'
 import { recover, overflow, sumUsage } from '../src/recovery.ts'
 import { groupMessages, fragmentUnit, splitLength } from '../src/segments.ts'
 import { isBasicCompaction } from '../src/index.ts'
+import { Context } from '@deepseek-ai/cordis'
+import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 const user = text => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
-const directive = createUserMessage({ content: [{ type: 'text', text: 'Original eight-section directive' }], source: { kind: 'plugin', plugin: 'dsh-compaction-basic' } })
+const directive = { role: 'user', content: [{ type: 'text', text: 'Original eight-section directive' }] }
 const options = messages => ({ provider: 'mock', model: 'm', sessionId: 'test', purpose: 'compaction',
   messages: [...messages, directive], system: 'original system', tools: [{ name: 'tool', description: 'original', parameters: {} }], maxTokens: 100 })
 const rejected = [{ type: 'finish', reason: { kind: 'error', failure: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'too long' } } }]
@@ -27,11 +29,15 @@ function harness(overrides = {}) {
   }
   return { requests, records, deps }
 }
-test('recognizes only the basic compaction producer and classified overflow', () => {
+test('recognizes only the owning basic compaction engine and classified overflow', t => {
+  const ctx = new Context()
+  t.after(() => ctx.fiber.dispose())
+  const engine = new BasicCompactionEngine(ctx, { auto: false })
   const request = options([user('history')])
-  assert.equal(isBasicCompaction(request), true)
-  assert.equal(isBasicCompaction({ ...request, purpose: undefined }), false)
-  assert.equal(isBasicCompaction({ ...request, messages: [user('same words')] }), false)
+  assert.equal(isBasicCompaction(request, engine), true)
+  assert.equal(isBasicCompaction({ ...request, purpose: undefined }, engine), false)
+  assert.equal(isBasicCompaction(request, undefined), false)
+  assert.equal(isBasicCompaction({ ...request, messages: [] }, engine), false)
   assert.equal(overflow(rejected), true)
   assert.equal(overflow([{ type: 'finish', reason: { kind: 'error', failure: { code: 'INVALID_REQUEST', message: '400' } } }]), false)
 })

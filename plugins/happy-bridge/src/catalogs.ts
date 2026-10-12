@@ -3,6 +3,8 @@
 import { hostname } from 'node:os'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-query'
 import { HAPPY_CLI_VERSION } from './happy-version.ts'
 import type { RemoteGrant } from './types.ts'
 import { VIRTUAL_HOME } from './paths.ts'
@@ -89,11 +91,13 @@ export interface SessionMetadata {
 export async function buildSessionMetadata(
   ctx: Context,
   source: {
+    sessionId: SessionId
     cwd: string
     /** POSIX path under {@link VIRTUAL_HOME}; Happy groups the list by this. */
     happyPath: string
     events: readonly { type: string; data: unknown }[]
     agent?: Agent
+    archived?: boolean
   },
   machineId: string,
   title: string,
@@ -106,9 +110,18 @@ export async function buildSessionMetadata(
   const models = await listModels(ctx)
   const presets = ctx.get('permissionPresets')
   const names = presets?.names ?? ['workspace-write', 'danger-full-access']
-  const currentPreset = presets === undefined
-    ? 'workspace-write'
-    : presets.current(source.events as Parameters<NonNullable<typeof presets>['current']>[0])
+  let currentPreset = 'workspace-write'
+  if (presets !== undefined) {
+    if (source.agent !== undefined) currentPreset = presets.current(source.agent.session)
+    else {
+      const observation = await ctx.sessionQuery.observeSession(source.sessionId)
+      try {
+        const permission = observation.projections?.values.permissions
+        if (permission === undefined) throw new Error('Happy session metadata requires the permissions projection')
+        currentPreset = permission.currentValue
+      } finally { observation[Symbol.dispose]() }
+    }
+  }
   const operatingModes = names
     .filter(name => name !== 'custom' && name !== 'read-only')
     .map(name => ({
@@ -136,7 +149,7 @@ export async function buildSessionMetadata(
     machineId,
     flavor: 'acp',
     startedBy: 'terminal',
-    lifecycleState: 'running',
+    lifecycleState: source.archived ? 'archived' : 'running',
     lifecycleStateSince: Date.now(),
     happyHomeDir: VIRTUAL_HOME,
     happyLibDir: VIRTUAL_HOME,

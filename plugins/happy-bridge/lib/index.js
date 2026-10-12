@@ -1,5 +1,4 @@
 import Schema from "@deepseek-ai/schemastery";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { admitEncodedImages } from "@deepseek-ai/dsh-attachment";
 import { ReasoningEffortId, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -26,16 +25,6 @@ function archiveSetDiff(previous, next) {
 		hidden: [...next].filter((id) => !previous.has(id)),
 		shown: [...previous].filter((id) => !next.has(id))
 	};
-}
-/**
-* Keep Happy online when the row is still in the unarchived web sidebar.
-* Opening an offline phone row does not start a heartbeat by itself.
-* @param parked - plugin park flag.
-* @param liveOnWeb - id is in the unarchived web sidebar.
-*/
-function phoneParkAction(parked, liveOnWeb) {
-	if (liveOnWeb) return parked ? "unpark" : "keep";
-	return parked ? "keep" : "park";
 }
 /**
 * Archive on the Host (public API). Idempotent when already archived.
@@ -241,7 +230,20 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 	const models = await listModels(ctx);
 	const presets = ctx.get("permissionPresets");
 	const names = presets?.names ?? ["workspace-write", "danger-full-access"];
-	const currentPreset = presets === void 0 ? "workspace-write" : presets.current(source.events);
+	let currentPreset = "workspace-write";
+	if (presets !== void 0) {
+		if (source.agent !== void 0) currentPreset = presets.current(source.agent.session);
+		else {
+			const observation = await ctx.sessionQuery.observeSession(source.sessionId);
+			try {
+				const permission = observation.projections?.values.permissions;
+				if (permission === void 0) throw new Error("Happy session metadata requires the permissions projection");
+				currentPreset = permission.currentValue;
+			} finally {
+				observation[Symbol.dispose]();
+			}
+		}
+	}
 	const operatingModes = names.filter((name) => name !== "custom" && name !== "read-only").map((name) => ({
 		code: name,
 		value: name,
@@ -265,7 +267,7 @@ async function buildSessionMetadata(ctx, source, machineId, title, selection, _g
 		machineId,
 		flavor: "acp",
 		startedBy: "terminal",
-		lifecycleState: "running",
+		lifecycleState: source.archived ? "archived" : "running",
 		lifecycleStateSince: Date.now(),
 		happyHomeDir: VIRTUAL_HOME,
 		happyLibDir: VIRTUAL_HOME,
@@ -1215,8 +1217,8 @@ function isBlankSession(events) {
 }
 /**
 * Visible user/assistant/tool turns to copy onto an empty Happy session.
-* Plugin-injected user rows stay off the phone. Assistant chunks are skipped
-* in favor of the committed assistant/message. Reasoning blocks become a
+* Auxiliary user rows stay off the phone. Embedded attempt streams supply
+* reasoning when no committed reasoning block exists. Reasoning blocks become a
 * collapsible Think card; tool-call blocks become Happy-known tool cards.
 * @param events - session log in seq order.
 * @returns replay items in log order.
@@ -1234,8 +1236,12 @@ function historyItems(events) {
 			});
 			continue;
 		}
-		if (event.type === "assistant/chunk") {
-			reasoning = foldReasoning(reasoning, asRecord$4(asRecord$4(event.data).chunk));
+		if (event.type === "assistant/attempt") {
+			const stream = asRecord$4(event.data).stream;
+			if (Array.isArray(stream)) {
+				const text = streamReasoning(stream);
+				if (text.trim() !== "") pushThink(items, time, text.trim());
+			}
 			continue;
 		}
 		if (event.type === "turn/end") {
@@ -1265,7 +1271,9 @@ function historyItems(events) {
 			continue;
 		}
 		if (event.type === "assistant/message") {
-			const parts = assistantParts(asRecord$4(asRecord$4(event.data).message).content);
+			const data = asRecord$4(event.data);
+			const parts = assistantParts(asRecord$4(data.message).content);
+			reasoning = Array.isArray(data.stream) ? streamReasoning(data.stream) : "";
 			if (!parts.some((part) => part.kind === "thinking") && reasoning.trim() !== "") pushThink(items, time, reasoning.trim());
 			reasoning = "";
 			for (const part of parts) {
@@ -1353,6 +1361,17 @@ function visibleUserImages(event) {
 		images.push(attachment);
 	}
 	return images;
+}
+/**
+* Fold reasoning from the compact records of one settled model attempt.
+* @param stream - Validated records from assistant/message or assistant/attempt.
+* @returns Reasoning text including the latest completed reasoning block.
+*/
+function streamReasoning(stream) {
+	let text = "";
+	for (const record of stream) if (record.type === "reasoning-chunks") text += record.texts.join("");
+	else if (record.type === "chunk") text = foldReasoning(text, record.chunk);
+	return text;
 }
 /**
 * Walk committed assistant content in log order: reasoning, visible text, tool calls.
@@ -1937,6 +1956,7 @@ async function createOrLoadSession(input) {
 	return {
 		id,
 		seq: numberOr(session.seq, 0),
+		metadata: typeof session.metadata === "string" ? asRecord$3(decryptB64(input.crypto, session.metadata)) : asRecord$3(input.metadata),
 		metadataVersion: numberOr(session.metadataVersion, 0),
 		agentStateVersion: numberOr(session.agentStateVersion, 0)
 	};
@@ -2067,12 +2087,10 @@ async function downloadEncryptedAttachment(serverUrl, token, sessionId, ref) {
 * @param sessionId - Happy session id.
 */
 async function archiveHappySession(serverUrl, token, sessionId) {
-	try {
-		await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, {
-			method: "POST",
-			token
-		});
-	} catch {}
+	await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, {
+		method: "POST",
+		token
+	});
 }
 /**
 * Remove a Happy cloud session so the App can drop it from the list.
@@ -2258,10 +2276,10 @@ var HappyMachineSocket = class {
 			};
 			return this.handlers.resume(id);
 		});
-		await this.bindRpc(socket, "stop-session", (params) => {
+		await this.bindRpc(socket, "stop-session", async (params) => {
 			const id = asRecord$2(params).sessionId;
 			if (typeof id !== "string" || id === "") throw new Error("Session ID is required");
-			this.handlers.stopSession(id);
+			await this.handlers.stopSession(id);
 			return {
 				success: true,
 				message: "Session stopped"
@@ -2426,6 +2444,14 @@ var HappySessionSocket = class {
 	handlers;
 	socket;
 	metadataVersion = 0;
+	externalSelectionRevision = 0;
+	metadata = {};
+	previousModes;
+	publications = /* @__PURE__ */ new Map();
+	metadataTail = Promise.resolve();
+	heartbeatEnabled = false;
+	disposed = false;
+	messageSeq = -1;
 	agentStateVersion = 0;
 	aliveTimer;
 	turnId;
@@ -2446,8 +2472,18 @@ var HappySessionSocket = class {
 		this.crypto = crypto;
 		this.handlers = handlers;
 	}
-	/** Connect, register permission + abort + killSession, start keepalive. */
-	async connect(initialMetadataVersion = 0, initialAgentStateVersion = 0) {
+	/**
+	* Connect the message/RPC channel without enabling online presence.
+	* @param initialMetadataVersion - version returned by create/load.
+	* @param initialAgentStateVersion - permission-state version returned by create/load.
+	* @param initialMetadata - existing cloud snapshot; establishes a baseline, not a user action.
+	*/
+	async connect(initialMetadataVersion = 0, initialAgentStateVersion = 0, initialMetadata = {}) {
+		this.previousModes = {
+			modelMode: initialMetadata.modelMode,
+			effortLevel: initialMetadata.effortLevel
+		};
+		this.metadata = initialMetadata;
 		this.metadataVersion = initialMetadataVersion;
 		this.agentStateVersion = initialAgentStateVersion;
 		const socket = io(this.serverUrl, {
@@ -2465,6 +2501,10 @@ var HappySessionSocket = class {
 			timeout: 2e4,
 			withCredentials: true
 		});
+		if (this.disposed) {
+			socket.disconnect();
+			return;
+		}
 		this.socket = socket;
 		socket.on("update", (data) => {
 			if (data.body?.t === "update-session") {
@@ -2474,6 +2514,9 @@ var HappySessionSocket = class {
 			if (data.body?.t !== "new-message") return;
 			const content = data.body.message?.content;
 			if (content?.t !== "encrypted" || typeof content.c !== "string") return;
+			const seq = data.body.message?.seq;
+			if (seq !== void 0 && seq <= this.messageSeq) return;
+			if (seq !== void 0) this.messageSeq = seq;
 			const plain = decryptB64(this.crypto, content.c);
 			this.dispatchInbound(plain);
 		});
@@ -2489,6 +2532,7 @@ var HappySessionSocket = class {
 		} catch (error) {
 			this.handlers.log(`${error instanceof Error ? error.message : String(error)}，会话 ${this.happySessionId} 继续自动重连`);
 		}
+		if (this.disposed) return;
 		await registerRpc(socket, this.happySessionId, "permission", this.crypto, (params) => {
 			this.handlers.onPermission(asPermission(params));
 			return { ok: true };
@@ -2504,20 +2548,22 @@ var HappySessionSocket = class {
 			return { ok: true };
 		}, this.handlers.log);
 		this.rpcMethods.push(`${this.happySessionId}:abort`);
-		await registerRpc(socket, this.happySessionId, "killSession", this.crypto, () => {
+		await registerRpc(socket, this.happySessionId, "killSession", this.crypto, async () => {
 			this.stopKeepAlive();
-			this.handlers.onArchived();
+			await this.handlers.onArchived();
 			return {
 				success: true,
 				message: "Session archived"
 			};
 		}, this.handlers.log);
 		this.rpcMethods.push(`${this.happySessionId}:killSession`);
+		if (this.disposed) return;
 		this.rpcReady = true;
 		this.keepAlive(this.thinking);
 	}
 	/** Stop session-alive so an App archive can stick. */
 	stopKeepAlive() {
+		this.heartbeatEnabled = false;
 		if (this.aliveTimer !== void 0) {
 			clearInterval(this.aliveTimer);
 			this.aliveTimer = void 0;
@@ -2525,6 +2571,8 @@ var HappySessionSocket = class {
 	}
 	/** Close the socket and keepalive. */
 	dispose() {
+		this.disposed = true;
+		this.publications.clear();
 		this.stopKeepAlive();
 		this.socket?.removeAllListeners();
 		this.socket?.disconnect();
@@ -2647,6 +2695,7 @@ var HappySessionSocket = class {
 	* @param thinking - `agent/status === running`.
 	*/
 	keepAlive(thinking) {
+		if (!this.heartbeatEnabled || this.disposed) return;
 		this.thinking = thinking;
 		this.emitAlive();
 		this.ensureAliveTimer();
@@ -2658,6 +2707,7 @@ var HappySessionSocket = class {
 	* @param thinking - `true` while the Host turn is still executing.
 	*/
 	keepAliveNow(thinking) {
+		if (!this.heartbeatEnabled || this.disposed) return;
 		this.thinking = thinking;
 		this.socket?.emit("session-alive", {
 			sid: this.happySessionId,
@@ -2676,7 +2726,14 @@ var HappySessionSocket = class {
 		if (this.aliveTimer !== void 0) return;
 		this.keepAlive(this.thinking);
 	}
+	/** Enable presence only after the bridge has committed a visible session. */
+	startKeepAlive() {
+		if (this.disposed) return;
+		this.heartbeatEnabled = true;
+		this.keepAlive(this.thinking);
+	}
 	emitAlive() {
+		if (!this.heartbeatEnabled || this.disposed) return;
 		this.socket?.volatile.emit("session-alive", {
 			sid: this.happySessionId,
 			time: Date.now(),
@@ -2701,21 +2758,57 @@ var HappySessionSocket = class {
 	/**
 	* Encrypt and push session metadata.
 	* @param metadata - plaintext catalog object.
+	* @returns completion of the serialized publication; conflicts with new phone picks defer to their Host update.
 	*/
 	updateMetadata(metadata) {
-		const socket = this.socket;
-		if (socket === void 0) return;
-		this.emitMetadata(socket, metadata, this.metadataVersion, 0);
-	}
-	emitMetadata(socket, metadata, expected, attempt) {
-		socket.emit("update-metadata", {
-			sid: this.happySessionId,
-			metadata: encryptB64(this.crypto, metadata),
-			expectedVersion: expected
-		}, (answer) => {
-			if (typeof answer?.version === "number") this.metadataVersion = answer.version;
-			if (answer?.result === "version-mismatch" && attempt < 3 && typeof answer.version === "number") this.emitMetadata(socket, metadata, answer.version, attempt + 1);
+		const task = this.metadataTail.then(() => this.publishMetadata(metadata));
+		this.metadataTail = task.catch((error) => {
+			this.handlers.log("元数据同步失败：" + String(error));
 		});
+		return task;
+	}
+	async publishMetadata(owned) {
+		const socket = this.socket;
+		if (socket === void 0 || this.disposed) return;
+		const selectionRevision = this.externalSelectionRevision;
+		for (let attempt = 0; attempt < 4; attempt++) {
+			if (this.disposed) return;
+			const merged = {
+				...this.metadata,
+				...owned
+			};
+			const expected = this.metadataVersion;
+			const value = encryptB64(this.crypto, merged);
+			this.publications.set(value, expected + 1);
+			const answer = await new Promise((resolve, reject) => {
+				socket.timeout(8e3).emit("update-metadata", {
+					sid: this.happySessionId,
+					metadata: value,
+					expectedVersion: expected
+				}, (error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				});
+			});
+			if (this.disposed) return;
+			if (answer.result === "success") {
+				this.onMetadataUpdate({
+					version: answer.version ?? expected + 1,
+					value: answer.metadata ?? value
+				});
+				return;
+			}
+			if (answer.result !== "version-mismatch" || typeof answer.metadata !== "string" || typeof answer.version !== "number") throw new Error("Happy rejected metadata update");
+			const previous = catalogModelPick(this.metadata);
+			this.onMetadataUpdate({
+				version: answer.version,
+				value: answer.metadata
+			});
+			if (this.externalSelectionRevision !== selectionRevision) return;
+			const latest = catalogModelPick(this.metadata);
+			if (latest !== void 0 && !sameCatalogPick(previous, latest)) return;
+		}
+		throw new Error("Happy metadata version conflict");
 	}
 	/**
 	* Encrypt and push agentState (permission requests).
@@ -2729,6 +2822,7 @@ var HappySessionSocket = class {
 		this.emitState(socket, agentState, this.agentStateVersion, 0);
 	}
 	emitState(socket, agentState, expected, attempt) {
+		if (this.disposed) return;
 		socket.emit("update-state", {
 			sid: this.happySessionId,
 			agentState: encryptB64(this.crypto, agentState),
@@ -2759,21 +2853,29 @@ var HappySessionSocket = class {
 		});
 	}
 	onMetadataUpdate(metadata) {
-		if (typeof metadata?.value !== "string") return;
-		if (typeof metadata.version === "number") this.metadataVersion = metadata.version;
+		if (this.disposed || typeof metadata?.value !== "string" || typeof metadata.version !== "number") return;
+		if (metadata.version <= this.metadataVersion) return;
 		let record;
 		try {
 			record = asRecord(decryptB64(this.crypto, metadata.value));
 		} catch {
 			return;
 		}
-		const lifecycle = record.lifecycleState;
-		if (lifecycle === "archiveRequested" || lifecycle === "archived") {
-			this.handlers.onArchived();
-			return;
+		const previous = catalogModelPick(this.metadata);
+		const own = this.publications.get(metadata.value) === metadata.version;
+		for (const [value, version] of this.publications) if (version <= metadata.version) this.publications.delete(value);
+		this.metadataVersion = metadata.version;
+		this.metadata = record;
+		const next = catalogModelPick(record);
+		const explicitChange = record.modelMode !== this.previousModes?.modelMode || record.effortLevel !== this.previousModes?.effortLevel;
+		this.previousModes = {
+			modelMode: record.modelMode,
+			effortLevel: record.effortLevel
+		};
+		if (!own && explicitChange && next !== void 0 && !sameCatalogPick(previous, next)) {
+			this.externalSelectionRevision += 1;
+			this.handlers.onCatalog(record);
 		}
-		if (lifecycle === "running") this.handlers.onResumed();
-		this.handlers.onCatalog(record);
 	}
 	dispatchInbound(plain) {
 		const inbound = parseHappyInbound(plain);
@@ -2820,7 +2922,9 @@ var HappyBridge = class {
 	/** Last model/effort we wrote to Happy, so the metadata echo is not a phone pick. */
 	lastPublished = /* @__PURE__ */ new Map();
 	/** Count of in-flight phone-originated Host `selectModel` calls. */
-	hostSelectFromPhone = 0;
+	hostSelectFromPhone = /* @__PURE__ */ new Map();
+	scan;
+	mirroring = /* @__PURE__ */ new Map();
 	/** In-flight phone wakes, so two inbound texts do not double-resume. */
 	waking = /* @__PURE__ */ new Map();
 	/** Phone stop-session / archive: do not recreate these Happy rows. */
@@ -2898,7 +3002,7 @@ var HappyBridge = class {
 			this.error = error instanceof Error ? error.message : String(error);
 			this.log(`读取凭据失败：${this.error}`);
 		}
-		if (this.config.pairOnStart) await this.beginPairing();
+		if (this.running && this.config.pairOnStart) await this.beginPairing();
 	}
 	/** Tear down sockets. Web UI keeps running. */
 	dispose() {
@@ -2934,6 +3038,7 @@ var HappyBridge = class {
 		this.pairing = attempt;
 		const machineId = await peekMachineId(dir) ?? crypto.randomUUID();
 		attempt.done.then(async (partial) => {
+			if (!this.running || this.pairing !== attempt) return;
 			const credentials = {
 				...partial,
 				machineId
@@ -2993,6 +3098,7 @@ var HappyBridge = class {
 			},
 			...dataEncryptionKey === void 0 ? {} : { dataEncryptionKey }
 		});
+		if (!this.running || this.credentials !== credentials) return;
 		this.machine?.dispose();
 		this.machine = new HappyMachineSocket(credentials.machineId, credentials.token, this.config.serverUrl, crypto, {
 			spawn: (options) => this.spawn(options),
@@ -3002,28 +3108,27 @@ var HappyBridge = class {
 			log: this.log
 		});
 		await this.machine.connect();
+		if (!this.running || this.credentials !== credentials) return;
 		this.seedArchiveSet();
 		await this.syncMirrors();
-		if (this.scanTimer === void 0) this.scanTimer = setInterval(() => {
+		if (this.running && this.credentials === credentials && this.scanTimer === void 0) this.scanTimer = setInterval(() => {
 			this.syncMirrors();
 		}, 1e4);
 	}
 	installHooks() {
-		this.ctx.on("agent/created", ({ agent }) => {
+		this.ctx.on("agent/created", async ({ agent }) => {
 			if (!this.running || this.shouldSkip(agent)) return;
-			if (this.dismissed.has(agent.id) && isBlankSession(agent.session.events)) return;
+			if (this.dismissed.has(agent.id) && isBlankSession(await this.readEvents(agent))) return;
 			if (this.dismissed.has(agent.id)) this.undismiss(agent.id);
 			const existing = this.links.get(agent.id);
 			if (existing !== void 0) {
 				this.attachAgent(existing, agent);
-				this.wakePhone(existing, true);
+				if (!existing.parked) this.scheduleMetadata(existing);
 				return;
 			}
-			this.watchFirstAssemble(agent);
-			if (isBlankSession(agent.session.events) && !this.phoneSpawned.has(agent.id)) return;
-			this.mirrorAgent(agent).then(() => {
-				if (this.isHarnessArchived(agent.id)) this.parkPhoneSession(agent.id);
-			}).catch((error) => this.log(`镜像会话失败：${String(error)}`));
+			this.watchFirstAssemble(agent).catch((error) => this.log(String(error)));
+			if (isBlankSession(await this.readEvents(agent)) && !this.phoneSpawned.has(agent.id)) return;
+			this.ensureMirror(agent.id).catch((error) => this.log(String(error)));
 		});
 		this.ctx.on("agent/disposed", ({ agent }) => {
 			const link = this.links.get(agent.id);
@@ -3040,7 +3145,11 @@ var HappyBridge = class {
 			const link = this.links.get(agent.id);
 			if (link === void 0 || link.parked) return;
 			link.socket.keepAlive(status === "running");
-			if (status === "idle") this.drainNewEvents(link, agent);
+			if (status === "idle") this.drainNewEvents(link, agent).catch((error) => this.log(String(error)));
+		}, { global: true });
+		this.ctx.on("agent/assistant-stream", ({ agent, frame }) => {
+			const link = this.links.get(agent.id);
+			if (link !== void 0 && !link.replaying) this.onAssistantStream(link, frame);
 		}, { global: true });
 		this.ctx.on("session/event", (session, event) => {
 			if (event.type === "model/selection") {
@@ -3126,7 +3235,8 @@ var HappyBridge = class {
 		});
 		this.ctx.on("domain/changed", (change) => {
 			if (change.domain !== "workspace" || change.table !== "") return;
-			this.reconcileArchiveSet();
+			const state = change.value;
+			this.reconcileArchiveSet(state.archivedSessionIds);
 		});
 	}
 	isHarnessArchived(dshId) {
@@ -3136,67 +3246,126 @@ var HappyBridge = class {
 		const ids = this.ctx.get("workspaceRegistry")?.archivedSessionIds ?? [];
 		this.lastArchivedIds = new Set(ids.map(String));
 	}
-	reconcileArchiveSet() {
-		const next = new Set((this.ctx.get("workspaceRegistry")?.archivedSessionIds ?? []).map(String));
+	reconcileArchiveSet(ids) {
+		const next = new Set(ids.map(String));
 		const { hidden, shown } = archiveSetDiff(this.lastArchivedIds, next);
 		this.lastArchivedIds = next;
 		if (!this.running) return;
-		for (const id of hidden) if (this.links.has(id)) this.parkPhoneSession(id);
-		for (const id of shown) {
-			const link = this.links.get(id);
-			if (link !== void 0) this.unpark(link);
+		for (const id of hidden) {
+			this.links.get(id)?.socket.stopKeepAlive();
+			this.enqueue(id, () => this.syncArchive(id)).catch(() => {});
+		}
+		for (const id of shown) this.enqueue(id, () => this.syncArchive(id)).catch(() => {});
+	}
+	enqueue(id, operation) {
+		const credentials = this.credentials;
+		const task = (this.inboundTail.get(id) ?? Promise.resolve()).then(async () => {
+			if (!this.running || this.credentials !== credentials) return;
+			await this.mirroring.get(id)?.catch((error) => this.log("镜像初始化失败：" + String(error)));
+			if (this.running && this.credentials === credentials) await operation();
+		});
+		const tail = task.catch((error) => {
+			this.log("会话同步失败：" + String(error));
+		});
+		this.inboundTail.set(id, tail);
+		return task;
+	}
+	async syncArchive(id) {
+		const link = this.links.get(id);
+		if (link === void 0 || !this.running) return;
+		link.parked = this.isHarnessArchived(id);
+		await this.syncPresence(link);
+	}
+	async syncPresence(link) {
+		if (!this.running || this.credentials === void 0 || this.links.get(link.dshId) !== link) return;
+		const credentials = this.credentials;
+		if (link.parked) {
+			link.socket.stopKeepAlive();
+			if (link.cloudState === "archived") return;
+			await this.pushMetadata(link);
+			if (!this.running || this.credentials !== credentials) return;
+			await archiveHappySession(this.config.serverUrl, this.credentials.token, link.socket.happySessionId);
+			link.cloudState = "archived";
+			return;
+		}
+		if (link.cloudState !== "running") {
+			link.socket.stopKeepAlive();
+			if ((await createOrLoadSession({
+				serverUrl: this.config.serverUrl,
+				token: this.credentials.token,
+				tag: "dsh:" + link.dshId,
+				crypto: link.crypto,
+				metadata: {},
+				agentState: null
+			})).id !== link.socket.happySessionId) throw new Error("Happy session identity changed");
+			await this.pushMetadata(link);
+			if (!this.running || this.credentials !== credentials || this.links.get(link.dshId) !== link) return;
+			link.cloudState = "running";
+		}
+		if (!this.isHarnessArchived(link.dshId)) link.socket.startKeepAlive();
+	}
+	async activate(link) {
+		if (!this.running || this.links.get(link.dshId) !== link) return;
+		await revealOnHarness(this.ctx.get("workspaceRegistry"), link.dshId);
+		if (!this.running) return;
+		link.parked = false;
+		this.undismiss(link.dshId);
+		try {
+			await this.syncPresence(link);
+		} catch (error) {
+			this.log("手机上线待重试：" + String(error));
 		}
 	}
 	listedUnarchived() {
 		const registry = this.ctx.get("workspaceRegistry");
 		return new Set(unarchivedSessionIds(registry?.list() ?? [], registry?.archivedSessionIds ?? []));
 	}
-	async syncMirrors() {
-		if (!this.running || this.credentials === void 0) return;
-		const wanted = /* @__PURE__ */ new Set([...this.listedUnarchived()]);
-		for (const id of wanted) try {
-			await this.ensureMirror(id);
-		} catch (error) {
-			this.log(`镜像会话失败：${String(error)}`);
-		}
-		for (const id of this.ctx.get("workspaceRegistry")?.archivedSessionIds ?? []) try {
-			await this.ensureMirror(id);
-		} catch (error) {
-			this.log(`镜像会话失败：${String(error)}`);
-		}
-		for (const id of [...this.links.keys()]) {
-			const link = this.links.get(id);
-			if (link === void 0) continue;
-			const action = phoneParkAction(link.parked, wanted.has(id));
-			if (action === "unpark") {
-				this.wakePhone(link);
-				continue;
-			}
-			if (action === "park") {
-				if (!this.phoneSpawned.has(id) && isBlankSession(this.linkEvents(link))) this.abandonBlankMirror(id);
-				else if (this.isHarnessArchived(id)) this.parkPhoneSession(id);
-				continue;
-			}
-			if (link.parked) continue;
-			if (wanted.has(id)) this.wakePhone(link);
-			if (!this.phoneSpawned.has(id) && isBlankSession(this.linkEvents(link))) this.abandonBlankMirror(id);
-		}
-		await this.sweepHappyGhosts();
+	syncMirrors() {
+		if (this.scan !== void 0) return this.scan;
+		const task = this.scanMirrors().finally(() => {
+			this.scan = void 0;
+		});
+		this.scan = task;
+		return task;
 	}
-	async ensureMirror(id) {
+	async scanMirrors() {
+		if (!this.running || this.credentials === void 0) return;
+		const ids = /* @__PURE__ */ new Set([...this.listedUnarchived(), ...this.ctx.get("workspaceRegistry")?.archivedSessionIds ?? []]);
+		for (const id of ids) {
+			if (!this.running) return;
+			try {
+				await this.ensureMirror(id);
+				await this.enqueue(id, () => this.syncArchive(id));
+			} catch (error) {
+				this.log("镜像会话失败：" + String(error));
+			}
+		}
+		for (const [id, link] of this.links) if (!this.phoneSpawned.has(id) && isBlankSession(await this.linkEvents(link))) this.abandonBlankMirror(id);
+		if (this.running) await this.sweepHappyGhosts();
+	}
+	ensureMirror(id) {
+		const existing = this.mirroring.get(id);
+		if (existing !== void 0) return existing;
+		const task = this.createMirror(id).finally(() => {
+			this.mirroring.delete(id);
+		});
+		this.mirroring.set(id, task);
+		return task;
+	}
+	async createMirror(id) {
 		if (this.links.has(id)) return;
 		if (this.dismissed.has(id) && await this.sessionIsBlank(id) && !this.phoneSpawned.has(id)) return;
 		if (this.dismissed.has(id)) this.undismiss(id);
 		const agent = this.ctx.agents.get(SessionId(id));
 		if (agent !== void 0) {
 			if (this.shouldSkip(agent)) return;
-			if (isBlankSession(agent.session.events) && !this.phoneSpawned.has(id)) return;
+			if (isBlankSession(await this.readEvents(agent)) && !this.phoneSpawned.has(id)) return;
 			await this.mirrorAgent(agent);
-			if (this.isHarnessArchived(id)) this.parkPhoneSession(id);
+			await this.syncArchive(id);
 			return;
 		}
 		await this.mirrorDormant(id);
-		if (this.isHarnessArchived(id)) this.parkPhoneSession(id);
+		await this.syncArchive(id);
 	}
 	dropLink(dshId) {
 		const link = this.links.get(dshId);
@@ -3235,13 +3404,17 @@ var HappyBridge = class {
 	}
 	async sessionIsBlank(dshId) {
 		const agent = this.ctx.agents.get(SessionId(dshId));
-		if (agent !== void 0) return isBlankSession(agent.session.events);
+		if (agent !== void 0) return isBlankSession(await this.readEvents(agent));
 		const stored = await this.loadStored(dshId);
 		if (stored === void 0) return !this.links.has(dshId);
 		return isBlankSession(stored.events);
 	}
-	linkEvents(link) {
-		return link.agent?.session.events ?? link.events;
+	/** Read complete history only for a mirror operation that consumes the log. */
+	async readEvents(agent) {
+		return (await this.ctx.sessionQuery.readSession(agent.id)).events;
+	}
+	async linkEvents(link) {
+		return link.agent === void 0 ? link.events : this.readEvents(link.agent);
 	}
 	requireAgent(link) {
 		if (link.agent !== void 0) return link.agent;
@@ -3255,18 +3428,18 @@ var HappyBridge = class {
 		link.agent = agent;
 		link.cwd = agent.session.header.cwd ?? link.cwd;
 		link.events = [];
-		if (link.lastForwardedSeq < 0) link.lastForwardedSeq = lastEventSeq(agent.session.events);
+		if (link.lastForwardedSeq < 0) link.lastForwardedSeq = Number(agent.session.seq) - 1;
 		link.sessionUnsub?.();
 		link.sessionUnsub = agent.ctx.on("session/event", (session, event) => {
 			if (session.header.id !== link.dshId) return;
 			this.onSessionEvent(link, event);
 		}, { global: true });
-		this.watchFirstAssemble(agent);
+		this.watchFirstAssemble(agent).catch((error) => this.log(String(error)));
 	}
 	/** Copy log events newer than {@link Link.lastForwardedSeq} onto Happy. */
-	drainNewEvents(link, agent) {
+	async drainNewEvents(link, agent) {
 		if (link.replaying) return;
-		for (const event of agent.session.events) this.onSessionEvent(link, event);
+		for (const event of await this.readEvents(agent)) this.onSessionEvent(link, event);
 	}
 	/**
 	* Live agent for this Happy socket, resuming the persisted session when the
@@ -3312,7 +3485,7 @@ var HappyBridge = class {
 		}
 	}
 	async resumeSession(link) {
-		const setup = await this.composeAgentSetup(resolveSessionPreset(this.linkEvents(link), link.headerAgentPreset));
+		const setup = await this.composeAgentSetup(resolveSessionPreset(await this.linkEvents(link), link.headerAgentPreset));
 		const handle = await this.ctx.agents.resume({
 			resumeSessionId: SessionId(link.dshId),
 			setup
@@ -3352,20 +3525,18 @@ var HappyBridge = class {
 		return matchVirtualWorkspace(match.path, mapped);
 	}
 	async loadStored(id) {
-		const persistence = this.ctx.get("sessionPersistence");
-		if (persistence === void 0) return void 0;
 		try {
-			const stored = await persistence.inspect(SessionId(id));
-			if (stored.meta.origin === "subagent") return void 0;
-			const workspace = this.workspaceFor(id, stored.meta.cwd);
+			const stored = await this.ctx.sessionQuery.readSession(SessionId(id));
+			if (stored.session.origin === "subagent") return void 0;
+			const workspace = this.workspaceFor(id, stored.session.cwd);
 			if (workspace === void 0) return void 0;
 			return {
-				cwd: stored.meta.cwd ?? workspace.realPath,
+				cwd: stored.session.cwd ?? workspace.realPath,
 				happyPath: workspace.virtualPath,
 				events: stored.events,
-				...stored.meta.agentPreset === void 0 ? {} : { headerAgentPreset: stored.meta.agentPreset }
+				...stored.session.agentPreset === void 0 ? {} : { headerAgentPreset: stored.session.agentPreset }
 			};
-		} catch {
+		} catch (_error) {
 			return;
 		}
 	}
@@ -3383,13 +3554,15 @@ var HappyBridge = class {
 	}
 	async mirrorAgent(agent, happySessionId) {
 		if (this.links.has(agent.id) || this.credentials === void 0) return;
-		if (isBlankSession(agent.session.events) && happySessionId === void 0 && !this.phoneSpawned.has(agent.id)) return;
+		const events = await this.readEvents(agent);
+		if (isBlankSession(events) && happySessionId === void 0 && !this.phoneSpawned.has(agent.id)) return;
 		const workspace = this.workspaceFor(agent.id, agent.session.header.cwd);
 		if (workspace === void 0) return;
 		const cwd = agent.session.header.cwd ?? workspace.realPath;
 		const credentials = this.credentials;
 		const { ctx: crypto, dataEncryptionKey } = sessionCrypto(credentials);
 		let sessionId = happySessionId;
+		let initialMetadata = {};
 		let metadataVersion = 0;
 		let agentStateVersion = 0;
 		let seq = happySessionId === void 0 ? 0 : 1;
@@ -3400,11 +3573,13 @@ var HappyBridge = class {
 				tag: `dsh:${agent.id}`,
 				crypto,
 				metadata: await buildSessionMetadata(this.ctx, {
+					sessionId: agent.id,
 					cwd,
 					happyPath: workspace.virtualPath,
-					events: agent.session.events,
-					agent
-				}, credentials.machineId, sessionLabel(agent.session.events), this.currentModel(agent), this.config.remoteGrant),
+					events,
+					agent,
+					archived: this.isHarnessArchived(agent.id)
+				}, credentials.machineId, sessionLabel(events), this.currentModel(agent), this.config.remoteGrant),
 				agentState: {
 					controlledByUser: grantAtLeast(this.config.remoteGrant, "chat"),
 					requests: {}
@@ -3413,6 +3588,7 @@ var HappyBridge = class {
 			});
 			sessionId = created.id;
 			seq = created.seq;
+			initialMetadata = created.metadata;
 			metadataVersion = created.metadataVersion;
 			agentStateVersion = created.agentStateVersion;
 		}
@@ -3423,12 +3599,11 @@ var HappyBridge = class {
 			onCommunication: (rpc) => this.onCommunication(agent.id, rpc),
 			onAbort: () => this.onPhoneAbort(agent.id),
 			onArchived: () => this.onPhoneArchive(sessionId, agent.id),
-			onResumed: () => this.onPhoneRestore(agent.id),
 			onCatalog: (meta) => this.queuePhoneCatalog(agent.id, meta),
 			log: this.log
 		});
 		try {
-			await socket.connect(metadataVersion, agentStateVersion);
+			await socket.connect(metadataVersion, agentStateVersion, initialMetadata);
 		} catch (error) {
 			socket.dispose();
 			throw error;
@@ -3451,11 +3626,15 @@ var HappyBridge = class {
 			dshId: agent.id,
 			cwd,
 			events: [],
-			lastForwardedSeq: lastEventSeq(agent.session.events),
-			parked: false,
+			lastForwardedSeq: lastEventSeq(events),
+			parked: this.isHarnessArchived(agent.id),
 			completedRequests: /* @__PURE__ */ new Map(),
 			completedCommunications: /* @__PURE__ */ new Map()
 		};
+		if (!this.running || this.credentials !== credentials) {
+			socket.dispose();
+			return;
+		}
 		this.links.set(agent.id, link);
 		this.happyToDsh.set(sessionId, agent.id);
 		await this.watchFirstAssemble(agent);
@@ -3477,9 +3656,11 @@ var HappyBridge = class {
 			tag: `dsh:${dshId}`,
 			crypto,
 			metadata: await buildSessionMetadata(this.ctx, {
+				sessionId: SessionId(dshId),
 				cwd: stored.cwd,
 				happyPath: stored.happyPath,
-				events: stored.events
+				events: stored.events,
+				archived: this.isHarnessArchived(dshId)
 			}, credentials.machineId, title, void 0, this.config.remoteGrant),
 			agentState: {
 				controlledByUser: grantAtLeast(this.config.remoteGrant, "chat"),
@@ -3493,12 +3674,11 @@ var HappyBridge = class {
 			onCommunication: (rpc) => this.onCommunication(dshId, rpc),
 			onAbort: () => this.onPhoneAbort(dshId),
 			onArchived: () => this.onPhoneArchive(created.id, dshId),
-			onResumed: () => this.onPhoneRestore(dshId),
 			onCatalog: (meta) => this.queuePhoneCatalog(dshId, meta),
 			log: this.log
 		});
 		try {
-			await socket.connect(created.metadataVersion, created.agentStateVersion);
+			await socket.connect(created.metadataVersion, created.agentStateVersion, created.metadata);
 		} catch (error) {
 			socket.dispose();
 			throw error;
@@ -3521,11 +3701,15 @@ var HappyBridge = class {
 			cwd: stored.cwd,
 			events: stored.events,
 			lastForwardedSeq: -1,
-			parked: false,
+			parked: this.isHarnessArchived(dshId),
 			completedRequests: /* @__PURE__ */ new Map(),
 			completedCommunications: /* @__PURE__ */ new Map(),
 			...stored.headerAgentPreset === void 0 ? {} : { headerAgentPreset: stored.headerAgentPreset }
 		};
+		if (!this.running || this.credentials !== credentials) {
+			socket.dispose();
+			return;
+		}
 		this.links.set(dshId, link);
 		this.happyToDsh.set(created.id, dshId);
 		await this.pushMetadata(link);
@@ -3533,76 +3717,29 @@ var HappyBridge = class {
 		this.log(`已镜像未打开会话 ${dshId} → Happy ${created.id}（seq=${created.seq}）`);
 	}
 	unmapHappy(happySessionId) {
-		this.onPhoneArchive(happySessionId, this.happyToDsh.get(happySessionId));
+		return this.onPhoneArchive(happySessionId, this.happyToDsh.get(happySessionId));
 	}
 	/**
 	* Phone archive: park a real conversation so a later send resumes it.
 	* Blank placeholders are forgotten and not remirrored.
 	*/
 	onPhoneArchive(happySessionId, dshId) {
-		this.handlePhoneArchive(happySessionId, dshId);
-	}
-	async handlePhoneArchive(happySessionId, dshId) {
-		if (dshId !== void 0 && !await this.sessionIsBlank(dshId)) {
-			if (this.links.has(dshId)) this.parkPhoneSession(dshId, true);
-			else this.undismiss(dshId);
-			return;
-		}
-		this.forgetPhoneSession(happySessionId, dshId);
-	}
-	/**
-	* Park a real conversation on Happy. `hideHost` archives the same row on
-	* the web (phone archive). Web-initiated archive only parks Happy.
-	*/
-	parkPhoneSession(dshId, hideHost = false) {
-		const link = this.links.get(dshId);
-		if (link === void 0 || link.parked) return;
-		link.parked = true;
-		link.socket.stopKeepAlive();
-		if (this.credentials !== void 0) archiveHappySession(this.config.serverUrl, this.credentials.token, link.socket.happySessionId);
-		if (hideHost) hideOnHarness(this.ctx.get("workspaceRegistry"), dshId).catch((error) => {
-			this.log(`网页归档失败：${error instanceof Error ? error.message : String(error)}`);
+		if (dshId === void 0) return Promise.resolve();
+		this.links.get(dshId)?.socket.stopKeepAlive();
+		return this.enqueue(dshId, async () => {
+			if (await this.sessionIsBlank(dshId)) {
+				this.forgetPhoneSession(happySessionId, dshId);
+				return;
+			}
+			await hideOnHarness(this.ctx.get("workspaceRegistry"), dshId);
+			await this.syncArchive(dshId);
 		});
-		this.log(hideHost ? `已归档 ${dshId}，手机归档列表里打开或再发一条，网页侧栏也会回来` : `网页归档了 ${dshId}，手机也已归档，恢复后网页侧栏会回来`);
-	}
-	onPhoneRestore(dshId) {
-		const link = this.links.get(dshId);
-		if (link === void 0) {
-			this.undismiss(dshId);
-			return;
-		}
-		this.unpark(link);
 	}
 	undismiss(dshId) {
 		if (!this.dismissed.has(dshId)) return;
 		this.dismissed.delete(dshId);
 		removeDismissed(resolveCredentialDir(this.config.credentialDir), dshId);
 		this.log(`已恢复镜像 ${dshId}`);
-	}
-	/**
-	* Put this Happy row back online. Opening an offline chat on the phone
-	* does not start heartbeats; the web sidebar still showing the row, a
-	* phone send, or Happy's resume RPC all come through here.
-	* @param refreshCatalog - republish metadata (web open / phone resume).
-	*/
-	wakePhone(link, refreshCatalog = false) {
-		if (link.parked) {
-			this.unpark(link);
-			return;
-		}
-		link.socket.ensureKeepAlive();
-		if (refreshCatalog) this.pushMetadata(link);
-	}
-	unpark(link) {
-		if (!link.parked) return;
-		link.parked = false;
-		if (this.dismissed.has(link.dshId)) this.undismiss(link.dshId);
-		link.socket.keepAlive(false);
-		this.pushMetadata(link);
-		revealOnHarness(this.ctx.get("workspaceRegistry"), link.dshId).catch((error) => {
-			this.log(`网页恢复失败：${error instanceof Error ? error.message : String(error)}`);
-		});
-		this.log(`已恢复 ${link.dshId}，网页侧栏会重新显示这场对话`);
 	}
 	/**
 	* Honor a phone archive/delete: stop keepalive, drop the Happy row, and do
@@ -3626,11 +3763,15 @@ var HappyBridge = class {
 	* @param happySessionId - Happy cloud session id from the App.
 	*/
 	async resumeHappySession(happySessionId) {
+		if (!grantAtLeast(this.config.remoteGrant, "chat")) return {
+			type: "error",
+			errorMessage: "恢复会话需要能聊档"
+		};
 		const known = this.happyToDsh.get(happySessionId);
 		if (known !== void 0) {
 			const link = this.links.get(known);
 			if (link !== void 0) {
-				this.wakePhone(link, true);
+				await this.enqueue(link.dshId, () => this.activate(link));
 				this.log(`已从手机重新接上 ${known}`);
 				return {
 					type: "success",
@@ -3641,7 +3782,7 @@ var HappyBridge = class {
 		for (const link of this.links.values()) {
 			if (link.socket.happySessionId !== happySessionId) continue;
 			this.happyToDsh.set(happySessionId, link.dshId);
-			this.wakePhone(link, true);
+			await this.enqueue(link.dshId, () => this.activate(link));
 			this.log(`已从手机重新接上 ${link.dshId}`);
 			return {
 				type: "success",
@@ -3666,7 +3807,7 @@ var HappyBridge = class {
 				type: "error",
 				errorMessage: "找不到这场对话，请在电脑网页里点开它"
 			};
-			this.wakePhone(link, true);
+			await this.enqueue(link.dshId, () => this.activate(link));
 			this.log(`已从手机重新接上 ${dshId}`);
 			return {
 				type: "success",
@@ -3702,6 +3843,7 @@ var HappyBridge = class {
 			await this.applySpawnMeta(handle.agent, options);
 			await this.watchFirstAssemble(handle.agent);
 			await this.mirrorAgent(handle.agent, options.sessionId);
+			await this.syncArchive(handle.agent.id);
 			return {
 				type: "success",
 				sessionId: this.links.get(handle.agent.id)?.socket.happySessionId ?? options.sessionId ?? handle.agent.id
@@ -3719,20 +3861,27 @@ var HappyBridge = class {
 		if (options.permissionMode !== void 0) this.applyPermission(agent, options.permissionMode, true);
 	}
 	queueInbound(dshId, message) {
-		const next = (this.inboundTail.get(dshId) ?? Promise.resolve()).then(() => this.onInbound(dshId, message), () => this.onInbound(dshId, message));
-		this.inboundTail.set(dshId, next);
+		this.enqueue(dshId, () => this.onInbound(dshId, message)).catch(() => {});
 	}
-	/** Same queue as inbound text, so a catalog switch lands on the bar before the next send. */
+	/** Selection and text share the archive operation queue. */
 	queuePhoneCatalog(dshId, meta) {
-		const next = (this.inboundTail.get(dshId) ?? Promise.resolve()).then(() => this.applyPhoneCatalog(dshId, meta), () => this.applyPhoneCatalog(dshId, meta));
-		this.inboundTail.set(dshId, next);
+		this.enqueue(dshId, async () => {
+			try {
+				await this.applyPhoneCatalog(dshId, meta);
+			} catch (error) {
+				const link = this.links.get(dshId);
+				if (link !== void 0 && this.running) {
+					link.socket.sendText("service", "模型选择未应用：" + String(error));
+					await this.pushMetadata(link);
+				}
+				throw error;
+			}
+		}).catch(() => {});
 	}
 	async onInbound(dshId, message) {
 		const link = this.links.get(dshId);
-		if (link === void 0 || link.replaying) return;
-		this.wakePhone(link);
-		if (this.dismissed.has(dshId)) this.undismiss(dshId);
-		if (message.meta.sentFrom === "dsh") return;
+		if (link === void 0 || message.meta.sentFrom === "dsh") return;
+		if (!grantAtLeast(this.config.remoteGrant, "chat")) return;
 		if (message.kind === "text") {
 			if (!(link.pendingDownloads.length > 0) && link.lastPhoneText === message.text && Date.now() - link.lastPhoneAt < 2500) return;
 			link.lastPhoneText = message.text;
@@ -3744,8 +3893,11 @@ var HappyBridge = class {
 			return;
 		}
 		const files = await this.drainPhoneFiles(link);
+		if (message.text.trim() === "" && files.length === 0) return;
 		const pending = link.pendingHuman;
 		if (pending?.kind === "ask") {
+			if (message.text.trim() === "" && files.length === 0) return;
+			await this.activate(link);
 			const answers = mergeCustomAnswers(pending.questions, message.text, pending.deferred);
 			pending.resolve({ answers });
 			delete link.pendingHuman;
@@ -3778,6 +3930,11 @@ var HappyBridge = class {
 		const { agent } = ensured;
 		const names = new Set((this.ctx.get("commands")?.list(agent) ?? []).map((command) => command.name));
 		const kind = classifyInboundText(message.text, names);
+		if (kind === "command" && !grantAtLeast(this.config.remoteGrant, "full")) return;
+		const blocks = kind === "command" ? void 0 : await this.prepareFollowup(current, agent, message.text, files);
+		if (blocks !== void 0 && blocks.length === 0) return;
+		await this.activate(current);
+		if (!this.running) return;
 		await this.applyMessageMeta(current, agent, message.meta, kind === "command");
 		if (kind === "command") {
 			if (!grantAtLeast(this.config.remoteGrant, "full")) {
@@ -3785,12 +3942,15 @@ var HappyBridge = class {
 				return;
 			}
 			const { encoded } = splitPendingFiles(files);
-			const result = await this.ctx.get("commands")?.execute(agent, message.text, encoded, new AbortController().signal);
+			const result = await this.ctx.get("commands")?.execute(agent, message.text, encoded.map((image) => ({
+				type: "image",
+				...image
+			})), new AbortController().signal);
 			const text = result?.result.text ?? (result === void 0 ? "未知命令" : result.result.kind);
 			current.socket.sendText("service", text);
 			return;
 		}
-		await this.followup(current, agent, message.text, files);
+		this.followup(current, agent, blocks ?? []);
 	}
 	async applyMessageMeta(link, agent, meta, isCommand) {
 		const model = messageModelCode(meta);
@@ -3819,30 +3979,37 @@ var HappyBridge = class {
 		const pick = catalogModelPick(meta);
 		if (pick === void 0) return;
 		const published = this.lastPublished.get(dshId);
-		if (published === void 0 || sameCatalogPick(published, pick)) return;
-		this.log(`手机模型选择 ${pick.model ?? ""}${pick.effort ?? ""}（上次发布 ${published.model ?? "无"}），准备应用`);
+		this.log(`手机模型选择 ${pick.model ?? ""}${pick.effort ?? ""}（上次发布 ${published?.model ?? "无"}），准备应用`);
 		const link = this.links.get(dshId);
-		const agent = link === void 0 ? void 0 : this.requireAgent(link);
-		if (agent === void 0) return;
+		if (link === void 0) return;
+		const ensured = await this.ensureAgent(link);
+		if (ensured === void 0) throw new Error("无法加载原会话");
+		const { agent } = ensured;
 		if (pick.model !== void 0) {
 			await this.applyModel(agent, pick.model, pick.effort);
+			await this.activate(link);
 			return;
 		}
 		if (pick.effort === null) {
 			const current = this.currentModel(agent);
-			if (current !== void 0) await this.rememberModel(agent, {
+			if (current === void 0) throw new Error("当前没有已选模型");
+			await this.rememberModel(agent, {
 				provider: current.provider,
 				model: current.model
 			});
+			await this.activate(link);
 			return;
 		}
-		if (typeof pick.effort === "string") await this.applyEffort(agent, pick.effort);
+		if (typeof pick.effort === "string") {
+			await this.applyEffort(agent, pick.effort);
+			await this.activate(link);
+		}
 	}
 	async applyModel(agent, code, effort) {
 		const split = splitModelCode(code);
 		const current = this.currentModel(agent);
 		const provider = split.provider === "" ? current?.provider ?? "" : split.provider;
-		if (provider === "") return;
+		if (provider === "") throw new Error("模型缺少提供方");
 		const sameModel = current?.provider === provider && current.model === split.model;
 		const reasoningEffort = effort === null ? void 0 : typeof effort === "string" ? ReasoningEffortId(effort) : sameModel ? current?.reasoningEffort : void 0;
 		const next = {
@@ -3854,7 +4021,7 @@ var HappyBridge = class {
 	}
 	async applyEffort(agent, effort) {
 		const current = this.currentModel(agent);
-		if (current === void 0) return;
+		if (current === void 0) throw new Error("当前没有已选模型");
 		await this.rememberModel(agent, {
 			...current,
 			reasoningEffort: ReasoningEffortId(effort)
@@ -3867,8 +4034,14 @@ var HappyBridge = class {
 	*/
 	async rememberModel(agent, next) {
 		if (sameModelOverride(this.models.get(agent.id), next)) return;
-		this.models.set(agent.id, next);
+		const llm = this.ctx.get("llm");
+		if (llm === void 0) throw new Error("模型服务不可用");
+		const info = await llm.resolveModelInfo(next.provider, next.model);
+		if (next.reasoningEffort !== void 0 && !info.reasoning?.efforts.some((item) => item.id === next.reasoningEffort)) throw new Error("模型不支持所选思考强度");
 		await this.syncHostSelection(agent, next);
+		this.models.set(agent.id, next);
+		const link = this.links.get(agent.id);
+		if (link !== void 0) this.scheduleMetadata(link);
 	}
 	/**
 	* Write the web picker's Host selection (`sessionController.selectModel`) so
@@ -3876,8 +4049,8 @@ var HappyBridge = class {
 	*/
 	async syncHostSelection(agent, next) {
 		const controller = this.ctx.get("sessionController");
-		if (controller === void 0) return;
-		this.hostSelectFromPhone += 1;
+		if (controller === void 0) throw new Error("Host model selection service unavailable");
+		this.hostSelectFromPhone.set(agent.id, next);
 		try {
 			await controller.selectModel({
 				sessionId: agent.id,
@@ -3885,12 +4058,8 @@ var HappyBridge = class {
 				model: next.model,
 				...next.reasoningEffort === void 0 ? {} : { reasoningEffort: next.reasoningEffort }
 			});
-			const link = this.links.get(agent.id);
-			if (link !== void 0 && !link.parked) this.pushMetadata(link);
-		} catch (error) {
-			this.log(`电脑模型栏未同步：${error instanceof Error ? error.message : String(error)}`);
 		} finally {
-			this.hostSelectFromPhone -= 1;
+			this.hostSelectFromPhone.delete(agent.id);
 		}
 	}
 	/**
@@ -3898,16 +4067,19 @@ var HappyBridge = class {
 	* to Happy. Phone-originated calls set {@link hostSelectFromPhone} and push themselves.
 	*/
 	onHostModelSelected(sessionId, selection) {
-		if (this.hostSelectFromPhone) return;
+		const pending = this.hostSelectFromPhone.get(sessionId);
+		if (pending !== void 0 && pending.provider === selection.provider && pending.model === selection.model && pending.reasoningEffort === selection.reasoningEffort) return;
 		this.log(`网页选模型 ${selection.provider}/${selection.model}${selection.reasoningEffort ?? ""}，同步到手机`);
 		const next = {
 			provider: selection.provider,
 			model: selection.model,
 			...selection.reasoningEffort === void 0 ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }
 		};
-		this.models.set(sessionId, next);
-		const link = this.links.get(sessionId);
-		if (link !== void 0 && !link.parked) this.pushMetadata(link);
+		this.enqueue(sessionId, async () => {
+			this.models.set(sessionId, next);
+			const link = this.links.get(sessionId);
+			if (link !== void 0) await this.pushMetadata(link);
+		}).catch(() => {});
 	}
 	/**
 	* Land explicit effort on the Host picker and wait for that pin before this
@@ -3955,8 +4127,8 @@ var HappyBridge = class {
 			model: current.model,
 			...effort === void 0 ? {} : { reasoningEffort: ReasoningEffortId(effort) }
 		};
-		this.models.set(agent.id, next);
 		await this.syncHostSelection(agent, next);
+		this.models.set(agent.id, next);
 	}
 	applyPermission(agent, mode, fromCommand) {
 		const presets = this.ctx.get("permissionPresets");
@@ -3988,7 +4160,7 @@ var HappyBridge = class {
 	* matching the `steering: true` capability we advertise — otherwise the
 	* App unlocks the composer only to have the message wait a whole turn.
 	*/
-	async followup(link, agent, text, files) {
+	async prepareFollowup(link, agent, text, files) {
 		const blocks = [];
 		const { encoded, extras } = splitPendingFiles(files);
 		const store = this.ctx.get("attachments");
@@ -4008,7 +4180,11 @@ var HappyBridge = class {
 			type: "text",
 			text: prompt
 		});
-		if (blocks.length === 0) return;
+		return blocks;
+	}
+	/** Submit already admitted user content only after archive recovery. */
+	followup(link, agent, blocks) {
+		if (!this.running || blocks.length === 0) return;
 		link.skipNextUser += 1;
 		link.agent = agent;
 		const message = createUserMessage({
@@ -4050,10 +4226,26 @@ var HappyBridge = class {
 			return;
 		}
 	}
+	onAssistantStream(link, frame) {
+		if (frame.type === "end") {
+			if (frame.outcome.kind === "abandoned") this.flushReasoning(link, Date.now());
+			return;
+		}
+		if (frame.type !== "chunk") return;
+		const chunk = frame.chunk;
+		if (chunk.type === "reasoning-delta" && chunk.text !== "") {
+			link.reasoning += chunk.text;
+			this.pulseThink(link);
+		}
+		if (chunk.type === "block-end" && chunk.block.type === "reasoning") {
+			link.reasoning = chunk.block.text;
+			this.pulseThink(link);
+		}
+	}
 	onSessionEvent(link, event) {
 		if (!takeForwardedSeq(link, event.seq)) return;
 		if (event.type === "session/title") {
-			this.pushMetadata(link);
+			this.scheduleMetadata(link);
 			return;
 		}
 		if (event.type === "user/message") {
@@ -4082,22 +4274,17 @@ var HappyBridge = class {
 			link.socket.endTurn(status);
 			return;
 		}
-		if (event.type === "assistant/chunk") {
-			const chunk = event.data.chunk;
-			if (chunk.type === "reasoning-delta" && typeof chunk.text === "string" && chunk.text !== "") {
-				link.reasoning += chunk.text;
-				this.pulseThink(link);
-			}
-			if (chunk.type === "block-end" && chunk.block.type === "reasoning" && typeof chunk.block.text === "string") {
-				link.reasoning = chunk.block.text;
-				this.pulseThink(link);
-			}
+		if (event.type === "assistant/attempt") {
+			link.reasoning = streamReasoning(event.data.stream);
+			this.flushReasoning(link, event.time);
 			return;
 		}
 		if (event.type === "assistant/message") {
 			const parts = assistantParts(event.data.message.content);
-			if (!parts.some((part) => part.kind === "thinking")) this.flushReasoning(link, event.time);
-			else link.reasoning = "";
+			if (!parts.some((part) => part.kind === "thinking")) {
+				link.reasoning = streamReasoning(event.data.stream);
+				this.flushReasoning(link, event.time);
+			} else link.reasoning = "";
 			for (const part of parts) {
 				if (part.kind === "thinking") {
 					this.finishThink(link, part.text, event.time);
@@ -4411,26 +4598,40 @@ var HappyBridge = class {
 		});
 		this.pushAgentState(link);
 	}
+	scheduleMetadata(link) {
+		this.enqueue(link.dshId, () => this.pushMetadata(link)).catch(() => {});
+	}
 	async pushMetadata(link) {
 		if (this.credentials === void 0) return;
 		const workspace = this.workspaceFor(link.dshId, link.cwd);
 		if (workspace === void 0) return;
-		const events = this.linkEvents(link);
+		const events = await this.linkEvents(link);
 		const metadata = await buildSessionMetadata(this.ctx, {
+			sessionId: SessionId(link.dshId),
 			cwd: link.cwd,
 			happyPath: workspace.virtualPath,
 			events,
 			...link.agent === void 0 ? {} : { agent: link.agent }
 		}, this.credentials.machineId, sessionLabel(events), link.agent === void 0 ? void 0 : this.currentModel(link.agent), this.config.remoteGrant);
-		link.socket.updateMetadata(metadata);
-		const pick = catalogModelPick(metadata);
+		if (!this.running) return;
+		const archived = this.isHarnessArchived(link.dshId);
+		await link.socket.updateMetadata({
+			...metadata,
+			effortLevel: metadata.effortLevel ?? null,
+			currentThoughtLevelCode: metadata.currentThoughtLevelCode ?? null,
+			lifecycleState: archived ? "archived" : "running"
+		});
+		const pick = catalogModelPick({
+			...metadata,
+			effortLevel: metadata.effortLevel ?? null
+		});
 		const previousPick = this.lastPublished.get(link.dshId);
 		if (pick === void 0) this.lastPublished.delete(link.dshId);
 		else this.lastPublished.set(link.dshId, pick);
 		if (pick === void 0 || sameCatalogPick(previousPick, pick) === false) this.log(`发布目录：模型 ${pick?.model ?? "（无）"} 思考 ${String(pick?.effort ?? "（无）")}`);
 	}
 	pushAllMetadata() {
-		for (const link of this.links.values()) if (!link.parked) this.pushMetadata(link);
+		for (const link of this.links.values()) this.scheduleMetadata(link);
 	}
 	queueOutboundUser(link, text, images, time) {
 		link.outboundTail = link.outboundTail.then(() => this.pushUserToPhone(link, text, images, time), () => this.pushUserToPhone(link, text, images, time));
@@ -4466,7 +4667,7 @@ var HappyBridge = class {
 		}, time);
 	}
 	async replayHistory(link) {
-		const items = historyItems(this.linkEvents(link));
+		const items = historyItems(await this.linkEvents(link));
 		if (items.length === 0) return;
 		link.replaying = true;
 		try {
@@ -4757,33 +4958,44 @@ let HappyBridgeService = (() => {
 */
 /** Cordis plugin name. */
 const name = "happy-bridge";
-/** Settings namespace keyed by the Plugins tab card. */
-const HAPPY_BRIDGE_NS = settingsNamespace("happy-bridge");
+/** Loader entry id used by the Plugins configuration page. */
+const HAPPY_BRIDGE_NS = "happy-bridge";
 /** Wait for the agent registry before mirroring sessions. */
-const inject = ["agents"];
-/** Validated plugin config. Illegal values fail at load. */
+const inject = ["agents", "sessionQuery"];
+/** Validate editable fields before committing their live references. */
 const Config = Schema.object({
-	enabled: Schema.boolean().default(true),
-	serverUrl: Schema.string().default("https://api.cluster-fluster.com"),
-	appUrl: Schema.string().default("https://app.happy.engineering"),
-	credentialDir: Schema.string().default(""),
-	pairOnStart: Schema.boolean().default(true),
+	enabled: Schema.boolean().default(true).volatile(),
+	serverUrl: Schema.string().default("https://api.cluster-fluster.com").volatile(),
+	appUrl: Schema.string().default("https://app.happy.engineering").volatile(),
+	credentialDir: Schema.string().default("").volatile(),
+	pairOnStart: Schema.boolean().default(true).volatile(),
 	remoteGrant: Schema.union([
 		Schema.const("watch"),
 		Schema.const("chat"),
 		Schema.const("approve"),
 		Schema.const("full")
-	]).default("approve"),
-	questionChannel: Schema.union([Schema.const("communications"), Schema.const("permission")]).default("communications")
+	]).default("approve").volatile(),
+	questionChannel: Schema.union([Schema.const("communications"), Schema.const("permission")]).default("communications").volatile()
 });
 /**
-* Mount the Host half: settings namespace, Typert Remote, Happy relay.
+* Mount the Typert Remote and Happy relay; live Config edits update the running bridge.
 * @param ctx - Host context.
 * @param config - composition entry config.
 */
 function apply(ctx, config) {
 	const service = new HappyBridgeService(ctx);
-	let source = () => config;
+	const source = () => ({
+		enabled: config.enabled.get(),
+		serverUrl: config.serverUrl.get(),
+		appUrl: config.appUrl.get(),
+		credentialDir: config.credentialDir.get(),
+		pairOnStart: config.pairOnStart.get(),
+		remoteGrant: config.remoteGrant.get(),
+		questionChannel: config.questionChannel.get()
+	});
+	ctx.inject(["settings"], (child) => {
+		child.effect(() => child.settings.configure({ auto: false }, ctx.fiber));
+	});
 	const rebuild = () => {
 		service.live?.dispose();
 		const current = source();
@@ -4798,15 +5010,10 @@ function apply(ctx, config) {
 			ctx.logger.warn(`happy-bridge: 启动失败 ${error instanceof Error ? error.message : String(error)}`);
 		});
 	};
-	installSettingsSection(ctx, HAPPY_BRIDGE_NS, Config, config, {
-		setSource: (current) => {
-			source = current;
-		},
-		onChange: () => {
-			const current = source();
-			if (service.live?.acceptSettings(current) === true) return;
-			rebuild();
-		}
+	ctx.on("loader/volatile-update", () => {
+		const current = source();
+		if (service.live?.acceptSettings(current) === true) return;
+		rebuild();
 	});
 	ctx.effect(() => {
 		rebuild();

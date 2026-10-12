@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({
 					role: "img",
 					"aria-label": t("menu.refresh"),
 					title: t("menu.refresh"),
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline14, { size: 14 })
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutlineMedium, { size: 14 })
 				})
 			}];
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
@@ -157,7 +157,7 @@ window.__ModuleLoader__.load({
 					onClick: () => {
 						setOpen((value) => !value);
 					},
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: label }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 12 })]
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: label }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutlineMedium, { size: 12 })]
 				})
 			});
 		}
@@ -190,7 +190,9 @@ window.__ModuleLoader__.load({
 			"slots",
 			"locale",
 			"connection",
-			"sessions"
+			"sessions",
+			"uiSession",
+			"remote"
 		];
 		/** A bare filename (with extension) or a path containing a separator. */
 		function looksLikeFilePath(text) {
@@ -198,14 +200,14 @@ window.__ModuleLoader__.load({
 			return /^[^\s./\\]+\.\w+$/.test(text);
 		}
 		/**
-		* Resolve a workspace-relative path into the Host-facing absolute spelling
-		* (mirror of the runtime helper; kept local so the browser bundle stays free
-		* of cross-package value imports).
+		* Resolve a file label using the selected Session's workspace and the Host home.
 		* @param cwd - session workspace root, when known.
-		* @param path - absolute or workspace-relative path.
+		* @param path - absolute, home-relative, or workspace-relative path.
+		* @param home - Host home directory used for abbreviated tool labels.
 		* @returns an absolute path when a workspace root is available, otherwise the original path.
 		*/
-		function resolveWorkspacePath(cwd, path) {
+		function resolveWorkspacePath(cwd, path, home) {
+			if (path === "~" || /^~[/\\]/.test(path)) return home === void 0 ? path : home.replace(/[/\\]+$/, "") + path.slice(1);
 			if (path.startsWith("/") || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith("\\\\")) return path;
 			if (cwd === void 0 || cwd === "") return path;
 			return `${cwd.replace(/[/\\]+$/, "")}/${path.replace(/^[/\\]+/, "")}`;
@@ -292,13 +294,15 @@ window.__ModuleLoader__.load({
 		*/
 		async function openWithPreferred(connection, ctx, editorId, pathLabel) {
 			const snapshot = ctx.sessions.list.getSnapshot();
-			const filePath = resolveWorkspacePath(snapshot.current === void 0 ? void 0 : snapshot.byId[snapshot.current]?.cwd, pathLabel);
+			const selected = ctx.uiSession.adapter.current.getSnapshot().key;
+			const cwd = Object.entries(snapshot.byId).find(([id]) => id === selected)?.[1].cwd;
+			const filePath = resolveWorkspacePath(cwd, pathLabel, ctx.remote.$host.home);
 			const result = await connection.rpc.call("/api", "editorLauncher/openWith", { args: {
 				editorId,
 				filePath
 			} });
 			if (result.ok && result.value.ok) return;
-			await connection.api.host.openPath({ path: filePath });
+			await ctx.remote.session.openWorkspacePath({ path: filePath });
 		}
 		//#endregion
 		exports.apply = apply;

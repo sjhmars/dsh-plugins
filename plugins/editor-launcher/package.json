@@ -1,30 +1,45 @@
 {
   "name": "@sjhmars/editor-launcher",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Pick an installed editor from the Session header and open session file links with it, on Web and Desktop",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
-    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
-  "files": ["lib/index.js", "lib/invariant.js", "lib/client.js", "lib/types/**/*.d.ts", "cordis.patch.yml"],
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown -c tsdown.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "license": "MIT",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "disclosure": {
     "cloud": false,
     "network": [],
     "offlineMode": true,
     "apiKeys": [],
-    "permissions": ["file-system:detect-editors", "process:launch-editors"],
+    "permissions": [
+      "file-system:detect-editors",
+      "process:launch-editors"
+    ],
     "jurisdiction": [],
     "retention": "none"
   },
@@ -34,15 +49,18 @@
     "directory": "plugins/editor-launcher"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.5",
-    "react": "^18.2.0"
+    "@deepseek-ai/cordis": ">=4.0.5-alpha.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-alpha.1",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-session": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-api-remotes": ">=0.2.1-alpha.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
@@ -50,19 +68,34 @@
     "lightningcss": "^1.32.0",
     "react": "^18.3.1",
     "tsdown": "^0.22.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@deepseek-ai/cordis": "link:../../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-client-connection": "link:../../../deepseek-harness/packages/client/connection",
+    "@deepseek-ai/dsh-client-locale": "link:../../../deepseek-harness/packages/client/locale",
+    "@deepseek-ai/dsh-client-ui-conversation": "link:../../../deepseek-harness/packages/client/ui-conversation",
+    "@deepseek-ai/dsh-client-ui-primitives": "link:../../../deepseek-harness/packages/client/ui-primitives",
+    "@deepseek-ai/dsh-client-ui-slots": "link:../../../deepseek-harness/packages/client/ui-slots",
+    "@deepseek-ai/dsh-typert-protocol": "link:../../../deepseek-harness/packages/typert/protocol",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:../../../deepseek-harness/packages/client/ui-renderer",
+    "@deepseek-ai/dsh-client-ui-session": "link:../../../deepseek-harness/packages/client/ui-session",
+    "@deepseek-ai/dsh-api-session-controller": "link:../../../deepseek-harness/packages/api/session-controller",
+    "@deepseek-ai/dsh-api-remotes": "link:../../../deepseek-harness/packages/api/remotes"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-primitives"
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-renderer"
       ],
       "platform": "web"
     }
   }
 }
-

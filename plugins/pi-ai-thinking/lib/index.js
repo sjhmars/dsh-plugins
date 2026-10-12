@@ -1,5 +1,5 @@
 import Schema from "@deepseek-ai/schemastery";
-import { SettingsConflictError, settingsNamespace } from "@deepseek-ai/dsh-settings";
+import { SettingsConflictError } from "@deepseek-ai/dsh-settings";
 //#region lib/types/patch.js
 const SUPPORTED_PROTOCOLS = [
 	"openai-completions",
@@ -126,7 +126,7 @@ function buildThinkingOps(section, force) {
 *
 * @module @sjhmars/pi-ai-thinking
 */
-const PI_AI_NAMESPACE = settingsNamespace("llm-pi-ai");
+const PI_AI_NAMESPACE = "llm-pi-ai";
 /** Validate plugin configuration and provide its safe default. */
 const Config = Schema.object({ force: Schema.boolean().default(false) });
 /** Cordis plugin name. */

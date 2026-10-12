@@ -26,6 +26,7 @@ export declare const zh: {
     readonly readOnly: "这份设置现在不能改。";
     readonly enabled: "启用";
     readonly error: "出错";
+    readonly saveError: "设置未保存，请重试。";
 };
 /** English copy. */
 export declare const en: Record<keyof typeof zh, string>;

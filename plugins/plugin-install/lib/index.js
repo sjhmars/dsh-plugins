@@ -1,50 +1,22 @@
-import { createRequire } from "node:module";
 import Schema from "@deepseek-ai/schemastery";
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { PROFILE_TEMPLATES, initProfile, readProfileManifest, resolveBundleDir, resolveProfileDir, writeProfileManifest } from "@deepseek-ai/dsh-app-boot";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
+import { bundlePatchPaths, loadOverlayPatches, readProfileManifest, resolveBundleDir } from "@deepseek-ai/dsh-app-boot";
+import { runProfilePnpm } from "@deepseek-ai/dsh-plugin-manager/operations";
 //#region lib/types/add.js
-/**
-* 校验 npm 包名，并在 profile 目录执行与官方 `dsh plugin add` 相同的两步：
-* pnpm add，再按 `dsh.bundle` 调和 `dsh.profile.bundles`。
-* @module @sjhmars/plugin-install/add
-*/
-/** 安装器只写这两套 profile：浏览器 `dsh web` 与桌面客户端各一份，互不相通。 */
+/** Validate npm names and install packages through official profile operations. */
+/** Profiles exposed by this installer. */
 const INSTALL_PROFILES = ["web", "desktop"];
+/** Npm identity of this installer. */
+const INSTALLER_PACKAGE = "@sjhmars/plugin-install";
 /**
-* 是否为本安装器允许写入的 profile。
-* @param profile - 组合配置或 RPC 传入的名字。
-* @returns 是否为 `web` 或 `desktop`。
+* Check the configured profile name.
+* @param profile - Requested profile.
+* @returns Whether the name is web or desktop.
 */
 function isInstallProfile(profile) {
 	return INSTALL_PROFILES.includes(profile);
-}
-const LOG = "plugin-install";
-/** 本安装器的 npm 包名。设置页更新自己时不热替换，避免处理请求时卸掉当前实例。 */
-const INSTALLER_PACKAGE = "@sjhmars/plugin-install";
-/**
-* Loader 行是否属于该 npm 包：启动时的包名行、旧式 `包名?hot=`、以及
-* `file://…/node_modules/<包名>/…?hot=` 热挂行。
-* @param entryName - Loader `options.name`。
-* @param packageName - 不含版本后缀的 npm 包名。
-* @returns 是否应在热替换前卸掉。
-*/
-function entryBelongsToPackage(entryName, packageName) {
-	if (entryName === void 0 || packageName.length === 0) return false;
-	if (entryName === packageName || entryName.startsWith(`${packageName}?hot=`)) return true;
-	return (entryName.split("?")[0] ?? entryName).replaceAll("\\", "/").includes(`/node_modules/${packageName}/`);
-}
-/**
-* 从 profile 的 node_modules 解析刚装好的包入口 URL（不用已加载模块的 resolve 缓存）。
-* @param profile - `web` 或 `desktop`。
-* @param packageName - 不含版本后缀的 npm 包名。
-* @returns `file://` 入口 URL。
-*/
-function resolveInstalledPackageUrl(profile, packageName) {
-	const require = createRequire(join(resolveProfileDir(profile), "package.json"));
-	return pathToFileURL(require.resolve(packageName)).href;
 }
 /**
 * 只接受注册表包名(含 scope,可带可选 `@version` 后缀)。拒绝路径、协议
@@ -69,316 +41,148 @@ function parseNpmPackageName(raw) {
 	};
 }
 /**
-* 沿 node_modules 链直寻 pnpm CLI。pnpm 的 exports 只暴露 package.json,
-* `require.resolve('pnpm/bin/pnpm.cjs')` 即使文件存在也会被拒;直接按
-* 路径查找是唯一可靠的定位方式。
-* @param from - 起始目录,默认本模块目录。
-* @returns `bin/pnpm.cjs` 绝对路径;整条链都没有时为 undefined。
+* Install an npm bundle or plain dependency in the current profile.
+* Newly installed bundles are selected; updates preserve existing selections.
+* Failures restore the manifest and lockfile, while downloaded files and diagnostics may remain.
+* @param current - Launcher-owned profile locations and optional packaged pnpm invocation.
+* @param config - Resolved target, executable and operation bounds.
+* @param raw - Npm package name with an optional version.
+* @param signal - Cancels the package process; completion waits for it to stop.
+* @returns Saved package kind and diagnostics; success requires a process restart.
 */
-function resolvePnpmCli(from = dirname(fileURLToPath(import.meta.url))) {
-	let dir = from;
-	for (;;) {
-		const candidate = join(dir, "node_modules", "pnpm", "bin", "pnpm.cjs");
-		if (existsSync(candidate)) return candidate;
-		const parent = dirname(dir);
-		if (parent === dir) return void 0;
-		dir = parent;
-	}
-}
-/** 读 profile 的 node_modules/.modules.yaml 里记录的 storeDir;全新或非 pnpm 布局时为 undefined。 */
-function readProfileStoreDir(profileDir) {
-	let text;
-	try {
-		text = readFileSync(join(profileDir, "node_modules", ".modules.yaml"), "utf8");
-	} catch {
-		return;
-	}
-	try {
-		const parsed = JSON.parse(text);
-		if (typeof parsed.storeDir === "string") return parsed.storeDir;
-	} catch {}
-	const line = text.split(/\r?\n/).find((candidate) => candidate.startsWith("storeDir:"));
-	if (line === void 0) return void 0;
-	return line.slice(9).trim().replace(/^['"]|['"]$/g, "");
-}
-function normalizePath(path) {
-	return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
-}
-function cliLauncher(cli) {
-	return {
-		label: cli,
-		storePath: (cwd) => {
-			const result = spawnSync(process.execPath, [
-				cli,
-				"store",
-				"path"
-			], {
-				cwd,
-				encoding: "utf8"
-			});
-			return result.status === 0 ? (result.stdout ?? "").trim() : void 0;
-		},
-		run: (args, cwd) => spawnSync(process.execPath, [cli, ...args], {
-			cwd,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				ELECTRON_RUN_AS_NODE: "1"
-			}
-		})
-	};
-}
-function systemLauncher() {
-	return {
-		label: "pnpm (system)",
-		storePath: (cwd) => {
-			const result = spawnSync("pnpm", ["store", "path"], {
-				cwd,
-				encoding: "utf8",
-				shell: process.platform === "win32"
-			});
-			return result.status === 0 ? (result.stdout ?? "").trim() : void 0;
-		},
-		run: (args, cwd) => spawnSync("pnpm", [...args], {
-			cwd,
-			encoding: "utf8",
-			shell: process.platform === "win32"
-		})
-	};
-}
-/**
-* 选出与 profile 兼容的 pnpm:两个大版本的 pnpm store 布局互不兼容
-* (ERR_PNPM_UNEXPECTED_STORE),必须由创建该 node_modules 的同一套
-* store 继续管理。先读 .modules.yaml 的 storeDir,在 profile 目录里
-* 探测各候选的 store(与实际运行同 cwd,避免 npmrc 链差异),取匹配
-* 者;全新 profile 或无人匹配时优先系统 pnpm(官方 `dsh plugin` 的同
-* 源管理者),内置 CLI 只在没有系统 pnpm 的机器上兜底。
-* @param profileDir - 目标 profile 目录。
-* @returns 可用的 pnpm 启动器;一个都没有时为 undefined。
-*/
-function selectPnpm(profileDir) {
-	const bundled = resolvePnpmCli() === void 0 ? void 0 : cliLauncher(resolvePnpmCli());
-	const system = systemLauncher();
-	const probed = bundled === void 0 ? [system] : [bundled, system];
-	const store = readProfileStoreDir(profileDir);
-	if (store !== void 0) for (const candidate of probed) {
-		const path = candidate.storePath(profileDir);
-		if (path !== void 0 && normalizePath(path) === normalizePath(store)) return candidate;
-	}
-	return [system, ...bundled === void 0 ? [] : [bundled]].find((candidate) => candidate.storePath(profileDir) !== void 0);
-}
-/**
-* 从已安装的 harness 包推断安装锚（desktop-app / web-app / base）。
-* @returns 某个 harness 包的 package.json 路径。
-*/
-function resolveInstallAnchor() {
-	const require = createRequire(import.meta.url);
-	for (const id of [
-		"@deepseek-ai/dsh-desktop-app/package.json",
-		"@deepseek-ai/dsh-web-app/package.json",
-		"@deepseek-ai/dsh-base/package.json"
-	]) try {
-		return require.resolve(id);
-	} catch {
-		continue;
-	}
-	throw new Error(`${LOG}: 找不到 harness 安装锚，无法调和 profile 插件层`);
-}
-function exportsPatch(packageName, profileDir, installAnchor) {
-	let dir;
-	try {
-		dir = resolveBundleDir("dsh", packageName, installAnchor, profileDir);
-	} catch {
-		return false;
-	}
-	return readProfileManifest("dsh", dir).dsh?.bundle?.patch !== void 0;
-}
-function reconcilePlugins(before, profileDir, installAnchor) {
-	const after = readProfileManifest("dsh", profileDir);
-	const beforeDeps = new Set(Object.keys(before.dependencies ?? {}));
-	const dependencies = Object.keys(after.dependencies ?? {});
-	const plugins = after.dsh?.profile?.bundles ?? [];
-	const warnings = [];
-	let changed = false;
-	for (const packageName of dependencies) {
-		const isBundle = exportsPatch(packageName, profileDir, installAnchor);
-		if (isBundle && !plugins.includes(packageName)) {
-			plugins.push(packageName);
-			changed = true;
-		} else if (!isBundle && !beforeDeps.has(packageName)) warnings.push(`${LOG}: ${packageName} 未声明 dsh.bundle，已作为普通依赖安装（日后带上声明会自动进层）`);
-	}
-	const dependencySet = new Set(dependencies);
-	for (const packageName of [...plugins]) {
-		const wasDependency = beforeDeps.has(packageName) || dependencySet.has(packageName);
-		const stillBundle = dependencySet.has(packageName) && exportsPatch(packageName, profileDir, installAnchor);
-		if (wasDependency && !stillBundle) {
-			plugins.splice(plugins.indexOf(packageName), 1);
-			changed = true;
-		}
-	}
-	if (changed) {
-		after.dsh = {
-			...after.dsh,
-			profile: {
-				...after.dsh?.profile,
-				bundles: plugins
-			}
-		};
-		writeProfileManifest(profileDir, after);
-	}
-	return warnings.join("\n");
-}
-/**
-* 在指定 profile 安装一个已校验的 npm 包名。
-* `web` 等价 `dsh plugin --profile web add`；`desktop` 等价 `dsh plugin --profile desktop add`。
-* @param profile - `web` 或 `desktop`。
-* @param packageName - 不含版本后缀的包名。
-* @param installAnchor - 与 CLI `INSTALL_ANCHOR` 同角色。
-* @param version - 可选版本(dist-tag、semver 或范围),拼入 pnpm 安装参数。
-* @returns 退出码与 stdout/stderr。
-*/
-function addProfilePlugin(profile, packageName, installAnchor, version = void 0) {
-	if (!isInstallProfile(profile)) return {
+async function addProfilePlugin(current, config, raw, signal) {
+	if (!isInstallProfile(config.profile) || config.profile !== current.name) return {
 		ok: false,
 		code: 2,
 		stdout: "",
-		stderr: `${LOG}: 只写入 web 或 desktop profile，收到 ${JSON.stringify(profile)}`
+		stderr: "plugin-install: 配置必须使用当前 web 或 desktop profile：" + current.name
 	};
-	const dir = resolveProfileDir(profile);
-	const template = PROFILE_TEMPLATES[profile];
-	if (template === void 0) return {
+	const spec = parseNpmPackageName(raw);
+	if (spec === void 0) return {
 		ok: false,
 		code: 2,
 		stdout: "",
-		stderr: `${LOG}: profile ${profile} 没有 shipped 模板`
+		stderr: "plugin-install: 只接受 npm 包名，可带 @版本。"
 	};
-	if (!existsSync(join(dir, "package.json"))) initProfile(dir, template.bundles, template.patchReload);
-	const before = readProfileManifest("dsh", dir);
-	const spec = version === void 0 ? packageName : `${packageName}@${version}`;
-	const pnpm = selectPnpm(dir);
-	if (pnpm === void 0) return {
-		ok: false,
-		code: 127,
-		stdout: "",
-		stderr: `${LOG}: 找不到可用的 pnpm（内置或系统），无法安装插件`
-	};
-	const result = pnpm.run(["add", spec], dir);
-	const stdout = result.stdout ?? "";
-	let stderr = result.stderr ?? "";
-	if (result.error !== void 0) {
-		if (result.error.code === "ENOENT") return {
-			ok: false,
-			code: 127,
-			stdout,
-			stderr: `${LOG}: 无法启动 pnpm（${pnpm.label}）`
-		};
-		throw result.error;
-	}
-	const exitCode = result.status ?? 1;
-	if (exitCode !== 0) {
-		stderr = [stderr, `${LOG}: pnpm 在 ${dir} 失败`].filter((part) => part.length > 0).join("\n");
+	let result;
+	const output = () => result === void 0 ? "" : result.output + (result.truncated ? "\nLog: " + result.logPath : "");
+	try {
+		return await withFileLock(join(current.dir, "package.json"), async () => {
+			signal?.throwIfAborted();
+			const files = await Promise.all(["package.json", "pnpm-lock.yaml"].map(async (name) => {
+				const filename = join(current.dir, name);
+				let content;
+				try {
+					content = await readFile(filename, "utf8");
+				} catch (error) {
+					if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+				}
+				return {
+					filename,
+					content
+				};
+			}));
+			try {
+				result = await runProfilePnpm({
+					...current,
+					profile: current.name
+				}, ["add", spec.version === void 0 ? spec.name : spec.name + "@" + spec.version], {
+					execution: "service",
+					...current.packageManager ?? { command: config.pnpmCommand },
+					outputBytes: config.outputBytes,
+					lockWaitMs: config.lockWaitMs,
+					idleTimeoutMs: config.idleTimeoutMs,
+					lookupTimeoutMs: config.lookupTimeoutMs,
+					...signal === void 0 ? {} : { signal }
+				});
+				signal?.throwIfAborted();
+				if (result.exitCode !== 0 || result.timedOut === true) throw new Error(result.timedOut ? "pnpm: installation timed out" : "pnpm: installation exited with code " + String(result.exitCode));
+				const directory = resolveBundleDir("dsh", spec.name, current.installAnchor, current.dir);
+				const installed = readProfileManifest("dsh", directory);
+				const bundle = installed.dsh?.bundle;
+				if (bundle !== void 0) for (const file of bundlePatchPaths(directory, bundle)) loadOverlayPatches("dsh", file);
+				const selected = readProfileManifest("dsh", current.dir).dsh?.profile?.bundles ?? [];
+				return {
+					ok: true,
+					code: 0,
+					stdout: output(),
+					stderr: "",
+					application: "restart-required",
+					kind: bundle === void 0 ? "dependency" : "bundle",
+					...bundle === void 0 ? {} : { enabled: selected.includes(spec.name) },
+					...installed.version === void 0 ? {} : { version: installed.version }
+				};
+			} catch (error) {
+				const failures = [];
+				for (const file of files) try {
+					if (file.content === void 0) await rm(file.filename, { force: true });
+					else await writeFileAtomic(file.filename, file.content, { mode: 384 });
+				} catch (restoreError) {
+					failures.push(restoreError);
+				}
+				if (failures.length > 0) throw new AggregateError([error, ...failures], "Installation failed; restoring profile files also failed");
+				throw error;
+			}
+		}, { waitMs: config.lockWaitMs });
+	} catch (error) {
 		return {
 			ok: false,
-			code: exitCode,
-			stdout,
-			stderr
+			code: result?.exitCode || 1,
+			stdout: output(),
+			stderr: error instanceof Error ? error.message : String(error),
+			application: signal?.aborted === true ? "cancelled" : "failed"
 		};
 	}
-	const warnings = reconcilePlugins(before, dir, installAnchor);
-	if (warnings.length > 0) stderr = [stderr, warnings].filter((part) => part.length > 0).join("\n");
-	return {
-		ok: true,
-		code: 0,
-		stdout,
-		stderr
-	};
 }
 //#endregion
 //#region lib/types/index.js
-/**
-* Host:设置里用 npm 包名给当前 profile 装树外插件。
-*
-* RPC 面走 connection 的精确 Fetch 路由而不是 Typert Remote:Remote 的
-* 方法标记寄存在 typert-protocol 模块内的注册表里,树外插件经 profile
-* node_modules 解析到的是另一份模块实例,gateway 永远看不见那些标记
-* (表现为 /api 调用 404)。精确路由由 connection 服务直接派发,不经
-* gateway 的端点认领,是官方为"不能用 JSON Remote 的调用"留的通道。
-* @module @sjhmars/plugin-install
-*/
-/** Cordis 插件名。 */
+/** Cordis plugin name. */
 const name = "plugin-install";
-/** 非法 profile 名在加载时失败。 */
-const Config = Schema.object({ profile: Schema.union([Schema.const("web"), Schema.const("desktop")]).default("web") });
-/** 精确 Fetch 路由挂在 connection 服务上。 */
-const inject = ["connection"];
-const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
-function json(value) {
-	return new Response(JSON.stringify(value), { headers: JSON_HEADERS });
-}
+/** Current-profile target and bounds for package operations. */
+const Config = Schema.object({
+	profile: Schema.union([Schema.const("web"), Schema.const("desktop")]).default("web"),
+	pnpmCommand: Schema.string().pattern(/\S/).default("pnpm"),
+	outputBytes: Schema.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(16384),
+	lockWaitMs: Schema.number().step(1).min(1).max(2147483647).default(12e4),
+	idleTimeoutMs: Schema.number().step(1).min(1).max(2147483647).default(12e4),
+	lookupTimeoutMs: Schema.number().step(1).min(1).max(2147483647).default(12e4)
+});
+/** Launcher profile and authenticated route carrier. */
+const inject = ["connection", "profileContext"];
 /**
-* 注册两条安装路由并挂上热挂载,按组合配置钉住目标 profile。
-*
-* GET 携带查询参数:精确 Fetch 路由只认 GET/HEAD(POST 保留给 JSON
-* Remote 通道),这个本地同源工具 API 以查询参数传包名。
-* @param ctx - Host 插件上下文。
-* @param config - 组合行配置。
+* Register target and installation routes; unloading cancels and joins owned package operations.
+* @param ctx - Host context with launcher-owned profile information.
+* @param config - Validated target and package-operation settings.
 */
 function apply(ctx, config) {
-	ctx.connection.fetch.register({
+	if (config.profile !== ctx.profileContext.name) throw new Error("plugin-install: profile 必须与当前运行的 profile 一致：" + ctx.profileContext.name);
+	const abort = new AbortController();
+	const operations = /* @__PURE__ */ new Set();
+	ctx.effect(() => async () => {
+		abort.abort();
+		await Promise.allSettled(operations);
+	}, "plugin-install: package operations");
+	ctx.effect(() => ctx.connection.fetch.register({
 		path: "/api/pluginInstall/target",
 		methods: ["GET"],
-		fetch: async () => json({ profile: config.profile })
-	});
-	ctx.connection.fetch.register({
+		requestBody: "buffered",
+		fetch: async () => Response.json({ profile: config.profile })
+	}), "plugin-install: target route");
+	ctx.effect(() => ctx.connection.fetch.register({
 		path: "/api/pluginInstall/install",
 		methods: ["GET"],
+		requestBody: "buffered",
 		fetch: async (request) => {
-			const spec = parseNpmPackageName(new URL(request.url).searchParams.get("package") ?? "");
-			if (spec === void 0) return json({
-				ok: false,
-				code: 2,
-				stdout: "",
-				stderr: "plugin-install: 只接受 npm 包名（可带 @版本，例如 @sjhmars/task-notify@0.2.0）"
-			});
-			const result = addProfilePlugin(config.profile, spec.name, resolveInstallAnchor(), spec.version);
-			if (!result.ok) return json(result);
-			return json(await mountInstalled(ctx, spec.name, result, config.profile));
+			const raw = new URL(request.url).searchParams.get("package") ?? "";
+			const operation = addProfilePlugin(ctx.profileContext, config, raw, abort.signal);
+			operations.add(operation);
+			try {
+				return Response.json(await operation);
+			} finally {
+				operations.delete(operation);
+			}
 		}
-	});
-	ctx.logger.info(`plugin-install: 安装目标 profile=${config.profile}`);
-}
-/**
-* 把刚装好的包挂进运行中的树:首次安装热挂载,更新版本热替换(dispose
-* 旧 entry 后以缓存爆破 URL 重新导入,新代码真正生效)。跨重启的持久
-* 由 profile 清单负责(已写好);任何挂载失败都只降级为"重启后生效",
-* 不影响安装结果。热挂载的行以插件默认配置运行;bundle patch 带 row
-* 配置或覆盖其他行的插件,完整组合以下次重启为准。
-* @param ctx - Host 插件上下文。
-* @param name - the installed package name.
-* @param result - the completed install result.
-* @param profile - 写入的 profile，用来从该目录解析刚装好的入口。
-* @returns the result with the live-mount outcome appended.
-*/
-async function mountInstalled(ctx, name, result, profile) {
-	if (name === "@sjhmars/plugin-install") return {
-		...result,
-		stdout: `${result.stdout}\nplugin-install: 本安装器已写入 profile，请重启 dsh 后生效（不能热替换正在处理这次安装的自己）。`.split("\n").filter((part) => part.length > 0).join("\n")
-	};
-	const stale = [...ctx.loader.entries()].filter((entry) => entryBelongsToPackage(entry.options.name, name) && entry.fiber !== void 0 && !entry.disabled);
-	try {
-		const fresh = `${resolveInstalledPackageUrl(profile, name)}?hot=${Date.now().toString(36)}`;
-		for (const entry of stale) await entry.update({ disabled: true });
-		await ctx.loader.create({ name: fresh });
-		return {
-			...result,
-			stdout: `${result.stdout}\nplugin-install: ${name} 已热${stale.length > 0 ? "替换" : "挂载"}，无需重启；界面部分刷新页面即可。`.split("\n").filter((part) => part.length > 0).join("\n")
-		};
-	} catch (error) {
-		return {
-			...result,
-			stderr: `${result.stderr}\nplugin-install: 安装成功，热挂载/热替换失败，重启后生效：${error instanceof Error ? error.message : String(error)}`.split("\n").filter((part) => part.length > 0).join("\n")
-		};
-	}
+	}), "plugin-install: installation route");
 }
 //#endregion
-export { Config, INSTALLER_PACKAGE, INSTALL_PROFILES, addProfilePlugin, apply, entryBelongsToPackage, inject, isInstallProfile, name, parseNpmPackageName };
+export { Config, INSTALLER_PACKAGE, INSTALL_PROFILES, addProfilePlugin, apply, inject, isInstallProfile, name, parseNpmPackageName };

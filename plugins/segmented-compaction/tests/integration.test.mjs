@@ -30,11 +30,19 @@ class Adapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
-async function setup(auto) {
+async function setup(t, auto) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'segmented-test-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = directory
   const ctx = new Context()
+  t.after(async () => {
+    try { await ctx.fiber.dispose() }
+    finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(TokenMeter)
@@ -43,7 +51,7 @@ async function setup(auto) {
   const compact = new BasicCompactionEngine(ctx, { auto, retainTokens: 0, maxTokens: 100 })
   const fiber = ctx.plugin(Plugin, defaults)
   await fiber
-  const agent = ctx.agentLoop.create('segmented-test', { provider: 'mock', model: 'm' })
+  const agent = await ctx.agentLoop.create('segmented-test', { provider: 'mock', model: 'm' })
   agent.followup(createUserMessage({ content: [{ type: 'text', text: 'long historical facts 中文 '.repeat(6000) }], source: { kind: 'user' } }))
   await agent.whenIdle()
   adapter.requests.length = 0
@@ -51,11 +59,11 @@ async function setup(auto) {
     await ctx.fiber.dispose()
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous
-    // Keep test journals under the OS temporary directory for failure diagnosis.
+    // Context teardown also runs if setup rejects.
   } }
 }
-test('real manual compact reuses one parent transaction, survives reload and allows conversation', async () => {
-  const h = await setup(false)
+test('real manual compact reuses one parent transaction, survives reload and allows conversation', async t => {
+  const h = await setup(t, false)
   try {
     h.adapter.activated = true
     const result = await h.compact.compactNow(h.agent, new AbortController().signal)
@@ -67,14 +75,14 @@ test('real manual compact reuses one parent transaction, survives reload and all
       assert.equal(request.messages.at(-1).content[0].text, requests[0].messages.at(-1).content[0].text)
       assert.equal(request.maxTokens, 100)
     }
-    const summaries = h.agent.session.events.filter(e => e.type === 'compaction/summary')
+    const summaries = h.agent.session.snapshotEvents().filter(e => e.type === 'compaction/summary')
     assert.equal(summaries.length, 1)
-    assert.equal(h.agent.session.events.filter(e => e.type === 'compaction/start').length, 1)
-    const reloaded = h.ctx.sessions.create('reloaded', { seed: [...h.agent.session.events] })
+    assert.equal(h.agent.session.snapshotEvents().filter(e => e.type === 'compaction/start').length, 1)
+    const reloaded = h.ctx.sessions.create('reloaded', { seed: [...h.agent.session.snapshotEvents()] })
     assert.deepEqual(reloaded.deriveMessages(), h.agent.session.deriveMessages())
     h.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } }))
     await h.agent.whenIdle()
-    assert.equal(h.agent.session.events.at(-1).data.reason.kind, 'completed')
+    assert.equal(h.agent.session.snapshotEvents().at(-1).data.reason.kind, 'completed')
     const journalNames = await fs.readdir(path.join(h.directory, 'segmented-compaction'), { recursive: true })
     const journalPath = journalNames.find(p => p.endsWith('.jsonl'))
     const journal = (await fs.readFile(path.join(h.directory, 'segmented-compaction', journalPath), 'utf8')).trim().split('\n').map(JSON.parse)
@@ -84,28 +92,28 @@ test('real manual compact reuses one parent transaction, survives reload and all
   } finally { await h.close() }
 })
 for (const mode of ['pressure', 'overflow']) {
-  test('real automatic recovery: ' + mode, async () => {
-    const h = await setup(true)
+  test('real automatic recovery: ' + mode, async t => {
+    const h = await setup(t, true)
     try {
       h.adapter.activated = true
       if (mode === 'overflow') h.adapter.capacity = 1000000
       h.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } }))
       await h.agent.whenIdle()
-      assert.equal(h.agent.session.events.at(-1).data.reason.kind, 'completed')
-      assert.ok(h.agent.session.events.some(e => e.type === 'compaction/summary'))
+      assert.equal(h.agent.session.snapshotEvents().at(-1).data.reason.kind, 'completed')
+      assert.ok(h.agent.session.snapshotEvents().some(e => e.type === 'compaction/summary'))
       assert.ok(h.adapter.requests.filter(r => r.purpose === 'compaction').length > 1)
     } finally { await h.close() }
   })
 }
-test('original success and unrelated errors never start segmented recovery', async () => {
-  const h = await setup(false)
+test('original success and unrelated errors never start segmented recovery', async t => {
+  const h = await setup(t, false)
   try {
     await h.compact.compactNow(h.agent, new AbortController().signal)
     assert.equal(h.adapter.requests.length, 1)
     assert.equal(h.adapter.requests[0].purpose, 'compaction')
     assert.equal(await fs.stat(path.join(h.directory, 'segmented-compaction')).then(() => true, () => false), false)
   } finally { await h.close() }
-  const bad = await setup(false)
+  const bad = await setup(t, false)
   try {
     bad.adapter.activated = true
     bad.adapter.failureCode = 'INVALID_REQUEST'
@@ -116,9 +124,9 @@ test('original success and unrelated errors never start segmented recovery', asy
   } finally { await bad.close() }
 })
 
-test('cancellation and plugin unload settle recovery without a parent replacement', async () => {
+test('cancellation and plugin unload settle recovery without a parent replacement', async t => {
   for (const mode of ['cancel', 'unload']) {
-    const h = await setup(false)
+    const h = await setup(t, false)
     try {
       h.adapter.activated = true
       let entered
@@ -143,20 +151,20 @@ test('cancellation and plugin unload settle recovery without a parent replacemen
       else await h.fiber.dispose()
       await rejected
       assert.deepEqual(h.agent.session.surface.nodes, before)
-      assert.equal(h.agent.session.events.filter(e => e.type === 'compaction/summary').length, 0)
+      assert.equal(h.agent.session.snapshotEvents().filter(e => e.type === 'compaction/summary').length, 0)
     } finally { await h.close() }
   }
 })
-test('two agents recover concurrently without sharing summaries or recursion markers', async () => {
-  const h = await setup(false)
+test('two agents recover concurrently without sharing summaries or recursion markers', async t => {
+  const h = await setup(t, false)
   try {
-    const other = h.ctx.agentLoop.create('other-session', { provider: 'mock', model: 'm' })
+    const other = await h.ctx.agentLoop.create('other-session', { provider: 'mock', model: 'm' })
     other.followup(createUserMessage({ content: [{ type: 'text', text: 'independent historical facts '.repeat(4000) }], source: { kind: 'user' } }))
     await other.whenIdle()
     h.adapter.activated = true
     await Promise.all([h.compact.compactNow(h.agent, new AbortController().signal), h.compact.compactNow(other, new AbortController().signal)])
-    assert.equal(h.agent.session.events.filter(e => e.type === 'compaction/summary').length, 1)
-    assert.equal(other.session.events.filter(e => e.type === 'compaction/summary').length, 1)
+    assert.equal(h.agent.session.snapshotEvents().filter(e => e.type === 'compaction/summary').length, 1)
+    assert.equal(other.session.snapshotEvents().filter(e => e.type === 'compaction/summary').length, 1)
     const dirs = await fs.readdir(path.join(h.directory, 'segmented-compaction'))
     assert.equal(dirs.length, 2)
   } finally { await h.close() }

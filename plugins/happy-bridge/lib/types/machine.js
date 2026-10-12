@@ -73,11 +73,11 @@ export class HappyMachineSocket {
             }
             return this.handlers.resume(id);
         });
-        await this.bindRpc(socket, 'stop-session', (params) => {
+        await this.bindRpc(socket, 'stop-session', async (params) => {
             const id = asRecord(params).sessionId;
             if (typeof id !== 'string' || id === '')
                 throw new Error('Session ID is required');
-            this.handlers.stopSession(id);
+            await this.handlers.stopSession(id);
             return { success: true, message: 'Session stopped' };
         });
         await this.bindRpc(socket, 'listDirectory', (params) => {

@@ -1,7 +1,3 @@
-/** Inert stub for @deepseek-ai/dsh-llm (only used outside tested paths). */
-
-export const createUserMessage = () => {
-  throw new Error('stub: createUserMessage is not available in tests')
-}
-
+/** Minimal message constructor and identity brand for bridge behavior tests. */
+export const createUserMessage = input => input
 export const ReasoningEffortId = value => value

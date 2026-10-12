@@ -1,4 +1,5 @@
 /** Fold a session label and replayable chat items from the harness log. */
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment/types';
 /** Minimal log event the history fold reads. */
 export interface HistoryEvent {
@@ -53,8 +54,8 @@ export declare function sessionLabel(events: readonly HistoryEvent[]): string;
 export declare function isBlankSession(events: readonly HistoryEvent[]): boolean;
 /**
  * Visible user/assistant/tool turns to copy onto an empty Happy session.
- * Plugin-injected user rows stay off the phone. Assistant chunks are skipped
- * in favor of the committed assistant/message. Reasoning blocks become a
+ * Auxiliary user rows stay off the phone. Embedded attempt streams supply
+ * reasoning when no committed reasoning block exists. Reasoning blocks become a
  * collapsible Think card; tool-call blocks become Happy-known tool cards.
  * @param events - session log in seq order.
  * @returns replay items in log order.
@@ -73,6 +74,12 @@ export declare function visibleUserText(event: HistoryEvent): string;
  * @returns attachment refs in content order.
  */
 export declare function visibleUserImages(event: HistoryEvent): ImageAttachmentRef[];
+/**
+ * Fold reasoning from the compact records of one settled model attempt.
+ * @param stream - Validated records from assistant/message or assistant/attempt.
+ * @returns Reasoning text including the latest completed reasoning block.
+ */
+export declare function streamReasoning(stream: readonly AssistantStreamRecord[]): string;
 /** One committed assistant content block, already folded for Happy. */
 export type AssistantPart = {
     kind: 'thinking';

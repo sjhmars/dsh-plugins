@@ -5,9 +5,9 @@
  * @module @sjhmars/pi-ai-thinking
  */
 import Schema from '@deepseek-ai/schemastery';
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { SettingsConflictError } from '@deepseek-ai/dsh-settings';
 import { buildThinkingOps } from "./patch.js";
-const PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai');
+const PI_AI_NAMESPACE = 'llm-pi-ai';
 /** Validate plugin configuration and provide its safe default. */
 export const Config = Schema.object({
     force: Schema.boolean().default(false),

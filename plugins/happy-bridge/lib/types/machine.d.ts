@@ -6,7 +6,7 @@ export interface MachineHandlers {
     spawn: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     /** Continue an offline Happy row (`resume-happy-session`). */
     resume: (happySessionId: string) => Promise<SpawnSessionResult>;
-    stopSession: (happySessionId: string) => void;
+    stopSession: (happySessionId: string) => void | Promise<void>;
     listWorkspaces: () => VirtualWorkspace[];
     log: (message: string) => void;
 }

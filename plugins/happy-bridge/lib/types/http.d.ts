@@ -36,6 +36,7 @@ export declare function createOrLoadSession(input: {
     seq: number;
     metadataVersion: number;
     agentStateVersion: number;
+    metadata: Record<string, unknown>;
 }>;
 /**
  * Register or update the machine entity so the App can spawn onto this Host.

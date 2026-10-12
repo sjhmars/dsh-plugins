@@ -17,25 +17,25 @@ window.__ModuleLoader__.load({
 			document.head.appendChild(tag);
 		}
 		var HappyBridgeCard_module_css_default = {
-			"card": "l9rBEq_card",
-			"description": "l9rBEq_description",
-			"status": "l9rBEq_status",
-			"headText": "l9rBEq_headText",
-			"name": "l9rBEq_name",
-			"body": "l9rBEq_body",
-			"checkbox": "l9rBEq_checkbox",
-			"error": "l9rBEq_error",
 			"row": "l9rBEq_row",
-			"label": "l9rBEq_label",
+			"card": "l9rBEq_card",
+			"name": "l9rBEq_name",
+			"checkbox": "l9rBEq_checkbox",
 			"chevron": "l9rBEq_chevron",
-			"select": "l9rBEq_select",
+			"description": "l9rBEq_description",
 			"qr": "l9rBEq_qr",
+			"button": "l9rBEq_button",
+			"error": "l9rBEq_error",
+			"status": "l9rBEq_status",
+			"body": "l9rBEq_body",
+			"label": "l9rBEq_label",
+			"select": "l9rBEq_select",
 			"header": "l9rBEq_header",
-			"button": "l9rBEq_button"
+			"headText": "l9rBEq_headText"
 		};
 		//#endregion
 		//#region src/client/HappyBridgeCard.tsx
-		/** Settings → Plugins card: pairing QR, copy links, remote grant. */
+		/** Plugins configuration card: pairing QR, copy links, remote grant. */
 		const GRANTS = [
 			"watch",
 			"chat",
@@ -54,6 +54,8 @@ window.__ModuleLoader__.load({
 			const writable = snap.writable;
 			const [open, setOpen] = (0, react.useState)(true);
 			const [status, setStatus] = (0, react.useState)(void 0);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(false);
 			const [copied, setCopied] = (0, react.useState)(void 0);
 			(0, react.useEffect)(() => {
 				let cancelled = false;
@@ -69,13 +71,24 @@ window.__ModuleLoader__.load({
 					clearInterval(timer);
 				};
 			}, [getStatus]);
+			const save = async (operation) => {
+				setSaving(true);
+				setSaveError(false);
+				try {
+					setSaveError(!await operation());
+				} catch (_error) {
+					setSaveError(true);
+				} finally {
+					setSaving(false);
+				}
+			};
 			const copy = async (which, value) => {
 				if (value === void 0) return;
 				await navigator.clipboard.writeText(value);
 				setCopied(which);
 				setTimeout(() => setCopied(void 0), 1500);
 			};
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("li", {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 				className: HappyBridgeCard_module_css_default.card,
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
 					type: "button",
@@ -110,8 +123,11 @@ window.__ModuleLoader__.load({
 									className: HappyBridgeCard_module_css_default.checkbox,
 									type: "checkbox",
 									checked: enabled,
-									disabled: !writable,
-									onChange: (event) => void setEnabled(event.target.checked)
+									disabled: !writable || saving,
+									onChange: (event) => {
+										const value = event.target.checked;
+										save(() => setEnabled(value));
+									}
 								}),
 								" ",
 								t("enabled")
@@ -177,8 +193,11 @@ window.__ModuleLoader__.load({
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("select", {
 									className: HappyBridgeCard_module_css_default.select,
 									value: grant,
-									disabled: !writable,
-									onChange: (event) => void setGrant(event.target.value),
+									disabled: !writable || saving,
+									onChange: (event) => {
+										const value = event.target.value;
+										save(() => setGrant(value));
+									},
 									children: GRANTS.map((value) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
 										value,
 										children: t(`grant.${value}`)
@@ -189,7 +208,12 @@ window.__ModuleLoader__.load({
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 							className: HappyBridgeCard_module_css_default.status,
 							children: t("grant.hint")
-						})
+						}),
+						saveError ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							className: HappyBridgeCard_module_css_default.error,
+							role: "status",
+							children: t("saveError")
+						}) : null
 					]
 				}) : null]
 			});
@@ -223,7 +247,8 @@ window.__ModuleLoader__.load({
 			"grant.hint": "改成「完整」后，手机换模型和思考强度会同步到电脑。电脑上换也会同步到手机。",
 			"readOnly": "这份设置现在不能改。",
 			"enabled": "启用",
-			"error": "出错"
+			"error": "出错",
+			"saveError": "设置未保存，请重试。"
 		};
 		/** English copy. */
 		const en = {
@@ -250,7 +275,8 @@ window.__ModuleLoader__.load({
 			"grant.hint": "On Full, a phone model or thinking-effort switch updates the computer picker. A computer switch updates the phone too.",
 			"readOnly": "This document is not writable here.",
 			"enabled": "Enabled",
-			"error": "Error"
+			"error": "Error",
+			"saveError": "Settings were not saved. Please try again."
 		};
 		//#endregion
 		//#region src/client/index.ts
@@ -260,15 +286,15 @@ window.__ModuleLoader__.load({
 			"locale",
 			"connection",
 			"remote",
-			"settingsScope"
+			"configForms"
 		];
 		/**
-		* Register the Happy remote card under the `happy-bridge` settings namespace.
+		* Register the Happy remote page using its Loader entry configuration.
 		* @param ctx - browser plugin context.
 		*/
 		function apply(ctx) {
 			const connection = ctx.get("connection");
-			const scope = ctx.settingsScope.bind({ namespace: "happy-bridge" });
+			const scope = ctx.configForms.get("happy-bridge");
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
@@ -276,9 +302,9 @@ window.__ModuleLoader__.load({
 			const rpc = async (method) => {
 				return unwrap(await connection.rpc.call("/api", `happyBridge/${method}`, { args: {} }));
 			};
-			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
-				name: "settings.plugin.item",
-				key: "happy-bridge",
+			ctx.slots.inject("plugins.bundle.config", () => ctx.slots.register({
+				name: "plugins.bundle.config",
+				key: "@sjhmars/happy-bridge",
 				locale: NS,
 				inject: () => ({
 					getStatus: () => rpc("getStatus"),

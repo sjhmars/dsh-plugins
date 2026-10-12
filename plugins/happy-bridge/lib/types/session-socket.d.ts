@@ -13,9 +13,7 @@ export interface SessionHandlers {
     /** Phone tapped Stop. Happy App `sessionAbort` for Rig sends `{}`. */
     onAbort: () => void;
     /** App archived or deleted this Happy session. */
-    onArchived: () => void;
-    /** App restored an archived session (lifecycle back to running). */
-    onResumed: () => void;
+    onArchived: () => void | Promise<void>;
     /** Phone changed Happy session metadata (model picker, without sending). */
     onCatalog: (meta: Record<string, unknown>) => void;
     /** Log line. */
@@ -34,6 +32,14 @@ export declare class HappySessionSocket {
     private readonly handlers;
     private socket;
     private metadataVersion;
+    private externalSelectionRevision;
+    private metadata;
+    private previousModes;
+    private readonly publications;
+    private metadataTail;
+    private heartbeatEnabled;
+    private disposed;
+    private messageSeq;
     private agentStateVersion;
     private aliveTimer;
     private turnId;
@@ -48,8 +54,13 @@ export declare class HappySessionSocket {
      * @param handlers - inbound callbacks.
      */
     constructor(happySessionId: string, token: string, serverUrl: string, crypto: CryptoContext, handlers: SessionHandlers);
-    /** Connect, register permission + abort + killSession, start keepalive. */
-    connect(initialMetadataVersion?: number, initialAgentStateVersion?: number): Promise<void>;
+    /**
+     * Connect the message/RPC channel without enabling online presence.
+     * @param initialMetadataVersion - version returned by create/load.
+     * @param initialAgentStateVersion - permission-state version returned by create/load.
+     * @param initialMetadata - existing cloud snapshot; establishes a baseline, not a user action.
+     */
+    connect(initialMetadataVersion?: number, initialAgentStateVersion?: number, initialMetadata?: Record<string, unknown>): Promise<void>;
     /** Stop session-alive so an App archive can stick. */
     stopKeepAlive(): void;
     /** Close the socket and keepalive. */
@@ -131,6 +142,8 @@ export declare class HappySessionSocket {
      * start them again.
      */
     ensureKeepAlive(): void;
+    /** Enable presence only after the bridge has committed a visible session. */
+    startKeepAlive(): void;
     private emitAlive;
     private ensureAliveTimer;
     /** Tell Happy this session process is gone so the App can archive or delete it. */
@@ -138,9 +151,10 @@ export declare class HappySessionSocket {
     /**
      * Encrypt and push session metadata.
      * @param metadata - plaintext catalog object.
+     * @returns completion of the serialized publication; conflicts with new phone picks defer to their Host update.
      */
-    updateMetadata(metadata: unknown): void;
-    private emitMetadata;
+    updateMetadata(metadata: Record<string, unknown>): Promise<void>;
+    private publishMetadata;
     /**
      * Encrypt and push agentState (permission requests).
      * Retries on version-mismatch the same way metadata does; a dropped bump

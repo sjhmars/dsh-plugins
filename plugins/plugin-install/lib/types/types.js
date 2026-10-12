@@ -1,3 +1,3 @@
-/** Host 配置：安装写进哪个 profile。 */
+/** Installer configuration and package-operation outcomes. */
 export {};
 //# sourceMappingURL=types.js.map

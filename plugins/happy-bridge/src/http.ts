@@ -2,7 +2,7 @@
 
 import { encodeBase64 } from './bytes.ts'
 import type { CryptoContext } from './encryption.ts'
-import { encryptB64 } from './encryption.ts'
+import { decryptB64, encryptB64 } from './encryption.ts'
 import { HAPPY_CLIENT } from './happy-version.ts'
 
 /**
@@ -61,7 +61,7 @@ export async function createOrLoadSession(input: {
   metadata: unknown
   agentState: unknown
   dataEncryptionKey?: Uint8Array
-}): Promise<{ id: string; seq: number; metadataVersion: number; agentStateVersion: number }> {
+}): Promise<{ id: string; seq: number; metadataVersion: number; agentStateVersion: number; metadata: Record<string, unknown> }> {
   const json = await happyFetch(input.serverUrl, '/v1/sessions', {
     method: 'POST',
     token: input.token,
@@ -82,6 +82,7 @@ export async function createOrLoadSession(input: {
   return {
     id,
     seq: numberOr(session.seq, 0),
+    metadata: typeof session.metadata === 'string' ? asRecord(decryptB64(input.crypto, session.metadata)) : asRecord(input.metadata),
     metadataVersion: numberOr(session.metadataVersion, 0),
     agentStateVersion: numberOr(session.agentStateVersion, 0),
   }
@@ -251,11 +252,7 @@ export async function downloadEncryptedAttachment(
  * @param sessionId - Happy session id.
  */
 export async function archiveHappySession(serverUrl: string, token: string, sessionId: string): Promise<void> {
-  try {
-    await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST', token })
-  } catch {
-    // Archive endpoint missing or session already inactive.
-  }
+  await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST', token })
 }
 
 /**

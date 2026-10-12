@@ -8,7 +8,7 @@
 
 ## 你会看见什么
 
-设置 → **插件** → **Happy 远程**：
+侧栏 **插件** → **@sjhmars/happy-bridge** → **Happy 远程**：
 
 - 未配对：二维码 + 可复制的手机/网页链接。请在 **Happy App 里扫**，不要用系统相机。
 - 已配对：显示已连接，可断开或点 **重新配对** 再出一张新二维码。断开只关掉 Happy 映射，网页 UI 还在。
@@ -16,7 +16,7 @@
 
 手机 Happy App：
 
-- 列表里看到本机普通会话（子 agent 不镜像）。侧栏里没点开的对话同样保持在线心跳。网页上的空白「新会话」占位（没发过第一条消息、网页未选中时会藏起来）不会出现在手机上；发出第一条之后才会镜像。在手机里给这样的对话发消息，会把它在电脑上唤醒（网页不必跟着切过去），并用这场对话上次用过的模型生成回复；没有记录就用网页默认模型。连着电脑时是在线；心跳断了会显示未在线。网页侧栏还在的对话会自动把心跳续上；手机点开这条未在线对话也会重新接通，不必先去网页点开。标题优先用网页会话名，没有就用第一条用户消息；空对话和网页一样叫「新会话」。列表按网页工作区分组，不会把 Windows 盘符路径堆成一坨。网页归档的对话会停心跳、进手机归档列表；从归档里打开或再发一条，网页侧栏会把这场对话显示回来。
+- 列表里看到本机普通会话（子 agent 不镜像）。侧栏里没点开的对话同样保持在线心跳。网页上的空白「新会话」占位（没发过第一条消息、网页未选中时会藏起来）不会出现在手机上；发出第一条之后才会镜像。在手机里给这样的对话发消息，会把它在电脑上唤醒（网页不必跟着切过去），并用这场对话上次用过的模型生成回复；没有记录就用网页默认模型。连着电脑时是在线；心跳断了会显示未在线。网页侧栏还在的对话会自动把心跳续上；归档历史可以在手机直接查看，发送新消息或主动切换模型、思考强度才会恢复。标题优先用网页会话名，没有就用第一条用户消息；空对话和网页一样叫「新会话」。列表按网页工作区分组，不会把 Windows 盘符路径堆成一坨。网页归档的对话会停心跳、进手机归档列表；在归档对话里发送新消息，或在「完整」档主动切换模型、思考强度后，网页侧栏会把这场对话显示回来；仅打开历史不会恢复。
 - 打开空的 Happy 会话时，会把网页里已有的用户/助手/工具记录补进去。之后网页新消息也会推到手机。网页第一条、以及从手机新建或唤醒一场对话时，会把思考强度写进网页模型栏（网页正在用的档，否则模型默认档），请求只读这一栏，避免第一段思考被写成正文。手机消息里的 `effort` / `effortLevel` 若真是换档（不是网页刚发布的回声），会先落到网页栏再发出。
 - 新建：只能选已经在网页登记过的工作区。不会在磁盘上 mkdir。App 里「new worktree」会失败（故意不暴露 bash）。
 - 发文字：已注册 `/命令` 走命令通道；否则当聊天。`/skill名` 仍当普通消息，由 harness 注入。
@@ -25,33 +25,52 @@
 - 电脑正在生成时，手机可以点停止（Happy App 的 Stop）。远程档至少「能聊」。只看档点了不会停。
 - 助手回复按整段推到手机（生成中会转圈）。思考收成一行 **Think · 摘要** 的 Note 卡片，点进去看全文。工具用 Happy 认识的名字（Grep / Read / Bash），描述跟网页那一行摘要一样。Happy 没有网页同款图标。
 
+## 归档与恢复
+
+DSH 的归档集合决定对话是否归档。已归档对话同样同步到 Happy，保留原会话 ID、历史和接收消息的连接，但不发送在线心跳。启动、重启、Socket 重连、标题更新和模型目录同步都不会取消归档。只同步历史不会启动 DSH Agent。
+
+| 操作 | 行为 |
+|---|---|
+| 手机打开历史、翻页 | 保持归档 |
+| 手机发送有效文字或图片消息 | 恢复原会话并继续；需要「能聊」或更高档 |
+| 手机主动切换模型、思考强度 | 立即同步到 DSH 并恢复，不发起模型请求；需要「完整」档 |
+| 未归档对话在任一端切换模型 | 另一端立即同步 |
+| 手机归档 | DSH 持久化归档，Happy 保留历史并停止心跳 |
+| DSH 归档集合移除会话 | Happy 原会话恢复在线，不跳转、不自动发消息；本插件不新增 DSH 恢复按钮 |
+
+模型选择和下一条消息按会话顺序执行。模型无效、权限不足或 Host 写入失败不会取消归档；手机会收到选择失败说明。归档和恢复请求也按同一顺序执行。云端暂时不可用时保留 DSH 的持久状态，通过扫描重试同步；归档失败期间保持心跳关闭。
+
+元数据的 `running` 字段不是恢复指令。插件按版本识别自身发布回声，收到新的手机模型选择才应用；初次读取云端旧模型值只建立基线。进程关闭期间仅切换模型，不保证启动后自动恢复。当前没有跨进程持久收件箱，不保证关机期间消息补拉或崩溃后的恰好一次交付；镜像历史期间收到的实时消息会排队处理。
+
+Happy 首次创建云端会话默认活跃，归档历史首次导入可能短暂出现在活跃列表，随后由归档接口纠正；该过程不会删除 DSH 归档标记。协议依据 Happy `ac64b9b`。测试范围和实际手机联调步骤见 [归档同步验证](tests/ARCHIVE-VERIFICATION.md)。
+
 ## 安装
 
-发布后：
+安装入口和 profile 的区别见 [仓库安装说明](../../README.md#install)。从 npm 安装 0.3.10；以下命令在 Windows CMD 中执行：
 
-```sh
-dsh plugin --profile web add @sjhmars/happy-bridge
-dsh plugin --profile desktop add @sjhmars/happy-bridge
+```bat
+cd /d H:\deepseek-harness
+pnpm dsh plugin --profile web add @sjhmars/happy-bridge@0.3.10 --registry=https://registry.npmjs.org
 ```
 
-设置里的二维码卡片是浏览器半边：必须按包名装进 profile，Harness 才能扫到 `dsh.client` 和 `exports["./client"]`。只 `--patch` 一个 `file:///` 文件只能挂上 Host，页面上不会出现入口。
+Desktop 通过应用内「插件 → 添加插件」安装；命令行需要 Desktop 注册的 `dsh`，完全退出应用后再执行。CLI 安装或更新后重启对应应用。
+
+二维码卡片属于浏览器客户端：安装完整 bundle 后，Harness 才能发现 `dsh.client` 和 `exports["./client"]`。只用 `--patch` 挂载 Host 文件，页面上不会出现配置入口。
 
 ## 本地联调
 
-```sh
-cd H:\dsh-plugin
+构建并打包后，在 Harness 仓库用 tarball 安装完整 bundle。以下命令在 Windows CMD 中执行：
+
+```bat
+cd /d H:\dsh-plugin
 pnpm --filter @sjhmars/happy-bridge run build
-```
-
-在 Harness 仓库把本插件目录装进 web profile（file: 依赖，不是把整个插件仓库 pnpm link 进去），然后**不要**再带 `--patch`：
-
-```sh
-cd H:\deepseek-harness
-pnpm dsh plugin --profile web add H:\dsh-plugin\plugins\happy-bridge
+pnpm --filter @sjhmars/happy-bridge pack --pack-destination H:\dsh-plugin\release
+cd /d H:\deepseek-harness
+pnpm dsh plugin --profile web add H:\dsh-plugin\release\sjhmars-happy-bridge-0.3.10.tgz --registry=https://registry.npmjs.org
 pnpm dsh web --port 3080
 ```
 
-打开设置 → 插件 → 插件配置，应出现 **Happy 远程** 卡片。在 Happy App 里扫码。扫码后手机应能看到本机会话、发消息、收回复。关掉插件或点断开，网页对话不受影响。
+打开侧栏插件 → @sjhmars/happy-bridge，应出现 **Happy 远程** 卡片。在 Happy App 里扫码。扫码后手机应能看到本机会话、发消息、收回复。关掉插件或点断开，网页对话不受影响。
 
 卸掉本地安装：`pnpm dsh plugin --profile web remove @sjhmars/happy-bridge`。
 
@@ -93,3 +112,12 @@ pnpm dsh web --port 3080
 - 手机列表里某场对话变成未在线 / 非活动，而网页侧栏还在：心跳断了。插件会把心跳续上；也可以在手机里点开这条对话重新接通。网页会话不会动。
 - 从手机发出的文字不会再在聊天里回显一遍。
 - 手机图片按 Happy 官方加密上传下载；电脑网页贴的图用同一套 blob 密钥加密后再 `request-upload` 推到手机。不是图片的附件只存到工作区 `happy-inbox/`，由电脑原来的 `read` 工具读取，不会当识图输入，也不会在插件里拆 PDF/Word。
+
+
+## 兼容与设置持久化
+
+0.3.10 要求 Harness 0.2.1-alpha.1 或更新版本。配置字段由 Loader 的 volatile 引用提供，客户端通过 configForms 在 Plugins 的 bundle 配置页保存；变更写入当前 profile 的 cordis.patch.yml。修改远程档与提问通道直接更新运行中的桥接，修改连接地址或启用状态会重新创建或关闭桥接。
+
+会话历史通过 sessionQuery.readSession 异步读取，实时思考来自 agent/assistant-stream；历史回放读取 assistant/message 与 assistant/attempt 内嵌的 stream。未打开会话的权限预设来自 sessionQuery 的 permissions 投影。包不再提供依赖旧 dsh-invariants 服务的空 invariant 入口。
+
+开发依赖通过 link: 指向相邻的 deepseek-harness checkout。先构建官方仓库的公开包，再在本仓库运行 pnpm install --ignore-scripts，随后构建本插件；npm test 验证桥接行为，仓库根的 npm run test:compat 验证实际 Loader 设置热更新及构建客户端的配置页。Desktop 使用同一客户端模块，独立桌面壳未做本次验证。

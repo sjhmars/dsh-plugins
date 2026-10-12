@@ -1,8 +1,8 @@
 # @sjhmars/pi-ai-thinking
 
-> **Model configuration helper for custom pi-ai providers.** Automatically adds a thinking-intensity selector to user-defined `llm-pi-ai` models created on the Harness settings page — reasoning-effort presets `off` / `low` / `high` / `max` for `openai-completions`, `openai-responses` and `anthropic-messages` protocols, with no harness source modification and no manual `settings.yaml` editing. "Thinking" here means the model's reasoning effort, not a UI animation.
+> **Model configuration helper for custom pi-ai providers.** Automatically adds a thinking-intensity selector to user-defined `llm-pi-ai` models created on the Harness settings page — reasoning-effort presets `off` / `low` / `high` / `max` for `openai-completions`, `openai-responses` and `anthropic-messages` protocols, with no harness source modification and no manual `cordis.patch.yml` editing. "Thinking" here means the model's reasoning effort, not a UI animation.
 
-为原设置页创建的自定义模型自动添加思考强度选择器，不修改 DeepSeek Harness 源码，也不要求手改 `settings.yaml`。
+为原设置页创建的自定义模型自动添加思考强度选择器，不修改 DeepSeek Harness 源码，也不要求手改 `cordis.patch.yml`。
 
 插件在启动时和自定义模型保存后检查 `llm-pi-ai` 的 user 配置。只要 provider 有 `models` 列表且协议为 `openai-completions`、`openai-responses` 或 `anthropic-messages`，每个模型都会获得 `off`、`low`、`high`、`max` 四档。
 
@@ -10,12 +10,14 @@
 
 ## 安装
 
-```sh
-dsh plugin --profile web add @sjhmars/pi-ai-thinking
-dsh plugin --profile desktop add @sjhmars/pi-ai-thinking
+安装入口和 profile 的区别见 [仓库安装说明](../../README.md#install)。Web 安装 0.1.1；以下命令在 Windows CMD 中执行：
+
+```bat
+cd /d H:\deepseek-harness
+pnpm dsh plugin --profile web add @sjhmars/pi-ai-thinking@0.1.1 --registry=https://registry.npmjs.org
 ```
 
-安装后重启对应的 Web 或 Desktop 客户端。
+Desktop 通过应用内「插件 → 添加插件」安装；命令行需要 Desktop 注册的 `dsh`，完全退出应用后再执行。CLI 安装或更新后重启对应应用。
 
 ## 使用
 
@@ -45,11 +47,18 @@ dsh plugin --profile desktop add @sjhmars/pi-ai-thinking
     force: true
 ```
 
-## 本地联调
+## 兼容与本地联调
+
+0.1.1 要求 Harness 0.2.1-alpha.1 或更新版本。插件使用 Loader entry id 定位配置表单，经 settings.mutate 写入当前 profile 的 cordis.patch.yml。包不再提供依赖旧 dsh-invariants 服务的空 invariant 入口。
+
+开发依赖通过 link: 指向相邻的 deepseek-harness checkout；先构建官方仓库的公开包，再在本仓库运行 pnpm install --ignore-scripts。设置持久化与各协议请求测试使用相同的官方包实例。
+
 
 ```sh
 cd H:\dsh-plugin
+pnpm install --ignore-scripts
 pnpm --filter @sjhmars/pi-ai-thinking run build
+pnpm --filter @sjhmars/pi-ai-thinking run test
 pnpm dsh web --patch H:\dsh-plugin\plugins\pi-ai-thinking\dev.cordis.yml --port 3080
 ```
 

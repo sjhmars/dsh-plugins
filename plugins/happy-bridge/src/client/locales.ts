@@ -27,6 +27,7 @@ export const zh = {
   'readOnly': '这份设置现在不能改。',
   'enabled': '启用',
   'error': '出错',
+  'saveError': '设置未保存，请重试。',
 } as const
 
 /** English copy. */
@@ -55,6 +56,7 @@ export const en: Record<keyof typeof zh, string> = {
   'readOnly': 'This document is not writable here.',
   'enabled': 'Enabled',
   'error': 'Error',
+  'saveError': 'Settings were not saved. Please try again.',
 }
 
 /** Stable locale keys. */

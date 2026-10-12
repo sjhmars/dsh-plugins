@@ -19,9 +19,23 @@ export async function buildSessionMetadata(ctx, source, machineId, title, select
     const models = await listModels(ctx);
     const presets = ctx.get('permissionPresets');
     const names = presets?.names ?? ['workspace-write', 'danger-full-access'];
-    const currentPreset = presets === undefined
-        ? 'workspace-write'
-        : presets.current(source.events);
+    let currentPreset = 'workspace-write';
+    if (presets !== undefined) {
+        if (source.agent !== undefined)
+            currentPreset = presets.current(source.agent.session);
+        else {
+            const observation = await ctx.sessionQuery.observeSession(source.sessionId);
+            try {
+                const permission = observation.projections?.values.permissions;
+                if (permission === undefined)
+                    throw new Error('Happy session metadata requires the permissions projection');
+                currentPreset = permission.currentValue;
+            }
+            finally {
+                observation[Symbol.dispose]();
+            }
+        }
+    }
     const operatingModes = names
         .filter(name => name !== 'custom' && name !== 'read-only')
         .map(name => ({
@@ -48,7 +62,7 @@ export async function buildSessionMetadata(ctx, source, machineId, title, select
         machineId,
         flavor: 'acp',
         startedBy: 'terminal',
-        lifecycleState: 'running',
+        lifecycleState: source.archived ? 'archived' : 'running',
         lifecycleStateSince: Date.now(),
         happyHomeDir: VIRTUAL_HOME,
         happyLibDir: VIRTUAL_HOME,

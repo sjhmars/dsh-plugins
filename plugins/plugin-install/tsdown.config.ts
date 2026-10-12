@@ -18,18 +18,14 @@ const VENDORED_LIBRARY = /^@deepseek-ai\/(cosmokit|schemastery)(\/|$)/
 /** Platform modules the shell shares into the frozen module table. */
 const PLATFORM_MODULES = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ] as const
 
-/** Documented temporary exemption: the runtime snapshot-store engine. */
-const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
-
 /** Externals resolved from the loader module table. */
-const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
+const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
 /** CSS-module virtual-id scheme, matching the repo build. */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
@@ -37,7 +33,7 @@ const CSS_VIRTUAL_SUFFIX = '.mjs'
 
 const libConfig: UserConfig = {
   name: PLUGIN_ID,
-  entry: ['lib/types/index.js', 'lib/types/invariant.js'],
+  entry: ['lib/types/index.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',
@@ -45,7 +41,7 @@ const libConfig: UserConfig = {
   fixedExtension: false,
   dts: false,
   clean: false,
-  external: [/^@deepseek-ai\//, 'pnpm'],
+  external: [/^@deepseek-ai\//],
 }
 
 const clientConfig: UserConfig = {

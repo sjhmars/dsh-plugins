@@ -2,7 +2,11 @@
 
 import type { ConnectionHandle, RpcResult } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { OpenResult, EditorInfo } from '../types.ts'
 import { EditorPicker, type EditorLauncherInjected } from './EditorPicker.tsx'
@@ -16,7 +20,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Required client services: the slot registry, locale, connection RPC, and the session list store. */
-export const inject = ['slots', 'locale', 'connection', 'sessions']
+export const inject = ['slots', 'locale', 'connection', 'sessions', 'uiSession', 'remote']
 
 /** A bare filename (with extension) or a path containing a separator. */
 function looksLikeFilePath(text: string): boolean {
@@ -25,14 +29,16 @@ function looksLikeFilePath(text: string): boolean {
 }
 
 /**
- * Resolve a workspace-relative path into the Host-facing absolute spelling
- * (mirror of the runtime helper; kept local so the browser bundle stays free
- * of cross-package value imports).
+ * Resolve a file label using the selected Session's workspace and the Host home.
  * @param cwd - session workspace root, when known.
- * @param path - absolute or workspace-relative path.
+ * @param path - absolute, home-relative, or workspace-relative path.
+ * @param home - Host home directory used for abbreviated tool labels.
  * @returns an absolute path when a workspace root is available, otherwise the original path.
  */
-function resolveWorkspacePath(cwd: string | undefined, path: string): string {
+function resolveWorkspacePath(cwd: string | undefined, path: string, home: string | undefined): string {
+  if (path === '~' || /^~[/\\]/.test(path)) {
+    return home === undefined ? path : home.replace(/[/\\]+$/, '') + path.slice(1)
+  }
   if (path.startsWith('/') || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')) return path
   if (cwd === undefined || cwd === '') return path
   const base = cwd.replace(/[/\\]+$/, '')
@@ -146,14 +152,15 @@ async function openWithPreferred(
   pathLabel: string,
 ): Promise<void> {
   const snapshot = ctx.sessions.list.getSnapshot()
-  const cwd = snapshot.current === undefined ? undefined : snapshot.byId[snapshot.current]?.cwd
-  const filePath = resolveWorkspacePath(cwd, pathLabel)
+  const selected = ctx.uiSession.adapter.current.getSnapshot().key
+  const cwd = Object.entries(snapshot.byId).find(([id]) => id === selected)?.[1].cwd
+  const filePath = resolveWorkspacePath(cwd, pathLabel, ctx.remote.$host.home)
   const result = await connection.rpc.call('/api', 'editorLauncher/openWith', {
     args: { editorId, filePath },
   }) as RpcResult<OpenResult>
   if (result.ok && result.value.ok) return
   // Fall back to the OS default application so the click always has an effect.
-  await connection.api.host.openPath({ path: filePath })
+  await ctx.remote.session.openWorkspacePath({ path: filePath })
 }
 
 export type { EditorLauncherInjected, EditorPickerProps } from './EditorPicker.tsx'

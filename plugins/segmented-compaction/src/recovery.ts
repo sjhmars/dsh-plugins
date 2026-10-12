@@ -1,6 +1,6 @@
 /** Bounded sequential recovery of a rejected compaction request. */
 import { BlockAssembler, CONTEXT_WINDOW_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, Message, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { Config } from './config.ts'
 import { fragmentUnit, groupMessages, historyMessage, pieceMessage, splitLength } from './segments.ts'
 import type { Piece } from './segments.ts'
@@ -76,7 +76,7 @@ export async function recover(
   let fragments: Piece[] | undefined
   let calls = 1
   let final: StreamChunk[] = []
-  const request = (messages: Message[]): GenerateOptions => ({
+  const request = (messages: RequestMessage[]): GenerateOptions => ({
     ...original,
     messages: [
       ...(carry.length === 0 ? [] : [historyMessage([{ type: 'text', text: '<compacted-summary>\n' + carry + '\n</compacted-summary>' }])]),
@@ -92,8 +92,8 @@ export async function recover(
     while (true) {
       original.signal?.throwIfAborted()
       const baseline = deps.estimate(request([]))
-      const fits = (messages: Message[]): boolean => deps.estimate(request(messages)) <= baseline + available
-      let messages: Message[] = []
+      const fits = (messages: RequestMessage[]): boolean => deps.estimate(request(messages)) <= baseline + available
+      let messages: RequestMessage[] = []
       let takeUnits = 0
       let takeChars: number | undefined
       let consumedPieces = 0

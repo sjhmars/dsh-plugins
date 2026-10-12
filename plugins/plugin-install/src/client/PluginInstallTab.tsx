@@ -1,8 +1,9 @@
-/** 设置 → 插件：只填 npm 包名安装。 */
+/** Plugins bundle page for installing npm names through the official manager. */
 
 import { useEffect, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Config, InstallResult } from '../types.ts'
+import type { PluginInstallKey } from './locales.ts'
 import css from './PluginInstallTab.module.css'
 
 /** 安装页注入的 Host RPC。 */
@@ -14,15 +15,16 @@ export interface PluginInstallTabInjected {
 }
 
 export type PluginInstallTabProps =
-  PropsRuntime<'settings.plugins.tab'>
+  PropsRuntime<'plugins.bundle.config'>
   & PropsLocale<'plugin-install'>
   & InjectFace<PluginInstallTabInjected>
 
 /**
  * 包名输入与安装日志。
- * @param props - 插槽运行时 + 文案 + RPC。
+ * @param props - 插槽运行时、文案和安装请求。
+ * @returns 安装输入框与官方操作结果。
  */
-export function PluginInstallTab({ install, target, t }: PluginInstallTabProps): ReactNode {
+export function PluginInstallTab({ install, target, t, view }: PluginInstallTabProps): ReactNode {
   const [packageName, setPackageName] = useState('')
   const [busy, setBusy] = useState(false)
   const [profile, setProfile] = useState<Config['profile'] | undefined>()
@@ -32,6 +34,8 @@ export function PluginInstallTab({ install, target, t }: PluginInstallTabProps):
     let cancelled = false
     void target().then((next) => {
       if (!cancelled) setProfile(next.profile)
+    }, (error: unknown) => {
+      if (!cancelled) setResult({ ok: false, code: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) })
     })
     return () => {
       cancelled = true
@@ -39,7 +43,7 @@ export function PluginInstallTab({ install, target, t }: PluginInstallTabProps):
   }, [target])
 
   const submit = (): void => {
-    if (busy) return
+    if (busy || profile === undefined || packageName.trim() === '') return
     setBusy(true)
     setResult(undefined)
     void install(packageName).then(
@@ -59,11 +63,16 @@ export function PluginInstallTab({ install, target, t }: PluginInstallTabProps):
     )
   }
 
-  const log = result === undefined
-    ? undefined
-    : [result.ok ? t('success') : t('failure'), result.stdout, result.stderr]
-      .filter(part => part.length > 0)
-      .join('\n')
+  let status: PluginInstallKey = 'failure'
+  if (result?.ok) {
+    if (result.kind === 'dependency') status = 'dependencyRestart'
+    else if (result.kind === 'bundle' && result.enabled === false) status = 'bundleDisabled'
+    else status = 'restart'
+  }
+  const log = result === undefined ? undefined
+    : [t(status), result.stdout, result.stderr].filter(part => part.length > 0).join('\n')
+
+  if (view === 'summary') return t('title')
 
   return (
     <div className={css.section}>
@@ -79,7 +88,7 @@ export function PluginInstallTab({ install, target, t }: PluginInstallTabProps):
             if (event.key === 'Enter') submit()
           }}
         />
-        <button type="button" disabled={busy || packageName.trim().length === 0} onClick={submit}>
+        <button type="button" disabled={busy || profile === undefined || packageName.trim().length === 0} onClick={submit}>
           {busy ? t('installing') : t('install')}
         </button>
       </div>

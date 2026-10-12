@@ -5,7 +5,7 @@ const PLUGIN_ID = '@sjhmars/pi-ai-thinking'
 
 const libConfig: UserConfig = {
   name: PLUGIN_ID,
-  entry: ['lib/types/index.js', 'lib/types/invariant.js'],
+  entry: ['lib/types/index.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

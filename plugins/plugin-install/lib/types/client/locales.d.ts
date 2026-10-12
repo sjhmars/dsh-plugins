@@ -1,17 +1,19 @@
-/** 安装页文案。 */
+/** Localized installer copy. */
 export declare const NS = "plugin-install";
-/** 简体中文。 */
+/** Simplified Chinese. */
 export declare const zh: {
-    readonly tab: "安装插件";
     readonly title: "用包名安装";
-    readonly hint: "只填 npm 包名（可带 @版本），例如 @sjhmars/task-notify 或 @sjhmars/task-notify@0.2.0。写入 {profile} profile（网页版是 web，桌面客户端是 desktop；两边互不相通）。装完或换版本都会热挂载，刷新页面即可；更新本安装器自己需重启。";
+    readonly hint: "支持 npm 插件和普通组件，可带 @版本。写入当前 {profile} profile，安装后重启应用。";
     readonly placeholder: "@scope/package";
     readonly install: "安装";
     readonly installing: "正在安装…";
-    readonly success: "安装成功，已热挂载；界面部分刷新页面即可。";
-    readonly failure: "安装失败";
+    readonly restart: "安装完成，请重启应用后生效。";
+    readonly dependencyRestart: "组件已安装，请重启应用。已配置的组件更新后生效；首次安装还需在配置文件中启用。";
+    readonly bundleDisabled: "安装完成，该插件仍处于停用状态。请在 Plugins 页启用后重启应用。";
+    readonly failure: "安装未完成";
 };
-/** English copy. */
+/** English. */
 export declare const en: Record<keyof typeof zh, string>;
+/** Dictionary keys. */
 export type PluginInstallKey = keyof typeof zh;
 //# sourceMappingURL=locales.d.ts.map

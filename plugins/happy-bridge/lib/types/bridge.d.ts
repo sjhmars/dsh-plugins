@@ -17,7 +17,9 @@ export declare class HappyBridge {
     /** Last model/effort we wrote to Happy, so the metadata echo is not a phone pick. */
     private readonly lastPublished;
     /** Count of in-flight phone-originated Host `selectModel` calls. */
-    private hostSelectFromPhone;
+    private readonly hostSelectFromPhone;
+    private scan;
+    private readonly mirroring;
     /** In-flight phone wakes, so two inbound texts do not double-resume. */
     private readonly waking;
     /** Phone stop-session / archive: do not recreate these Happy rows. */
@@ -71,9 +73,15 @@ export declare class HappyBridge {
     private isHarnessArchived;
     private seedArchiveSet;
     private reconcileArchiveSet;
+    private enqueue;
+    private syncArchive;
+    private syncPresence;
+    private activate;
     private listedUnarchived;
     private syncMirrors;
+    private scanMirrors;
     private ensureMirror;
+    private createMirror;
     private dropLink;
     /**
      * Remove a web New Session placeholder from Happy without remembering a
@@ -86,6 +94,8 @@ export declare class HappyBridge {
      */
     private sweepHappyGhosts;
     private sessionIsBlank;
+    /** Read complete history only for a mirror operation that consumes the log. */
+    private readEvents;
     private linkEvents;
     private requireAgent;
     /** Bind a live agent onto an existing Happy socket without reminting it. */
@@ -121,22 +131,7 @@ export declare class HappyBridge {
      * Blank placeholders are forgotten and not remirrored.
      */
     private onPhoneArchive;
-    private handlePhoneArchive;
-    /**
-     * Park a real conversation on Happy. `hideHost` archives the same row on
-     * the web (phone archive). Web-initiated archive only parks Happy.
-     */
-    private parkPhoneSession;
-    private onPhoneRestore;
     private undismiss;
-    /**
-     * Put this Happy row back online. Opening an offline chat on the phone
-     * does not start heartbeats; the web sidebar still showing the row, a
-     * phone send, or Happy's resume RPC all come through here.
-     * @param refreshCatalog - republish metadata (web open / phone resume).
-     */
-    private wakePhone;
-    private unpark;
     /**
      * Honor a phone archive/delete: stop keepalive, drop the Happy row, and do
      * not remirror this harness session until the plugin is unpaired.
@@ -151,7 +146,7 @@ export declare class HappyBridge {
     private spawn;
     private applySpawnMeta;
     private queueInbound;
-    /** Same queue as inbound text, so a catalog switch lands on the bar before the next send. */
+    /** Selection and text share the archive operation queue. */
     private queuePhoneCatalog;
     private onInbound;
     private applyMessageMeta;
@@ -198,6 +193,8 @@ export declare class HappyBridge {
      * matching the `steering: true` capability we advertise — otherwise the
      * App unlocks the composer only to have the message wait a whole turn.
      */
+    private prepareFollowup;
+    /** Submit already admitted user content only after archive recovery. */
     private followup;
     /**
      * Claim every download started before this text, wait, keep the successes.
@@ -205,6 +202,7 @@ export declare class HappyBridge {
      */
     private drainPhoneFiles;
     private downloadPhoneFile;
+    private onAssistantStream;
     private onSessionEvent;
     private onApproval;
     private onAsk;
@@ -235,6 +233,7 @@ export declare class HappyBridge {
     private clearRequest;
     /** Record a finished communications form and republish the snapshot. */
     private completeCommunication;
+    private scheduleMetadata;
     private pushMetadata;
     private pushAllMetadata;
     private queueOutboundUser;

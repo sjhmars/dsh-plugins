@@ -7,6 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import type { Agent } from '@deepseek-ai/dsh-agent';
+import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval';
 import type { AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions';
@@ -54,8 +55,10 @@ declare module '@deepseek-ai/cordis' {
  * 把一次刚结束的 agent 活动收成通知标题和正文。
  * @param agent - 刚回到 idle 的 agent。
  * @param config - 插件配置。
+ * @param events - sessionQuery 读取的已提交会话日志。
+ * @returns 带任务状态与最近回复预览的通知。
  */
-export declare function buildIdleRequest(agent: Agent, config: Config): NotifyRequest;
+export declare function buildIdleRequest(agent: Agent, config: Config, events: readonly SessionEvent[]): NotifyRequest;
 /**
  * 权限审批问人时的通知文案。
  * @param req - waterfall 里的只读审批请求。
@@ -66,8 +69,10 @@ export declare function buildApprovalRequest(req: ApprovalRequest, config: Confi
  * 向用户提问时的通知文案。
  * @param request - userQuestions.ask 的原始请求。
  * @param config - 插件配置。
+ * @param events - 会话日志；独立提问传空数组。
+ * @returns 带会话标题与问题预览的通知。
  */
-export declare function buildQuestionRequest(request: AskUserQuestionRequest, config: Config): NotifyRequest;
+export declare function buildQuestionRequest(request: AskUserQuestionRequest, config: Config, events: readonly SessionEvent[]): NotifyRequest;
 /** 对外服务：实现 DesktopNotifier，同时把 notify 发布成 Typert Remote。 */
 export declare class TaskNotifyService extends TypertRemoteService implements DesktopNotifier {
     private readonly notifier;

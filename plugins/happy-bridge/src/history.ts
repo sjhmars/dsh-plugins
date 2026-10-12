@@ -1,5 +1,6 @@
 /** Fold a session label and replayable chat items from the harness log. */
 
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment/types'
 
 /** Minimal log event the history fold reads. */
@@ -55,8 +56,8 @@ export function isBlankSession(events: readonly HistoryEvent[]): boolean {
 
 /**
  * Visible user/assistant/tool turns to copy onto an empty Happy session.
- * Plugin-injected user rows stay off the phone. Assistant chunks are skipped
- * in favor of the committed assistant/message. Reasoning blocks become a
+ * Auxiliary user rows stay off the phone. Embedded attempt streams supply
+ * reasoning when no committed reasoning block exists. Reasoning blocks become a
  * collapsible Think card; tool-call blocks become Happy-known tool cards.
  * @param events - session log in seq order.
  * @returns replay items in log order.
@@ -71,8 +72,12 @@ export function historyItems(events: readonly HistoryEvent[]): HistoryItem[] {
       items.push({ kind: 'turn-start', time })
       continue
     }
-    if (event.type === 'assistant/chunk') {
-      reasoning = foldReasoning(reasoning, asRecord(asRecord(event.data).chunk))
+    if (event.type === 'assistant/attempt') {
+      const stream = asRecord(event.data).stream
+      if (Array.isArray(stream)) {
+        const text = streamReasoning(stream)
+        if (text.trim() !== '') pushThink(items, time, text.trim())
+      }
       continue
     }
     if (event.type === 'turn/end') {
@@ -93,7 +98,9 @@ export function historyItems(events: readonly HistoryEvent[]): HistoryItem[] {
       continue
     }
     if (event.type === 'assistant/message') {
-      const parts = assistantParts(asRecord(asRecord(event.data).message).content)
+      const data = asRecord(event.data)
+      const parts = assistantParts(asRecord(data.message).content)
+      reasoning = Array.isArray(data.stream) ? streamReasoning(data.stream) : ''
       const hasThink = parts.some(part => part.kind === 'thinking')
       if (!hasThink && reasoning.trim() !== '') pushThink(items, time, reasoning.trim())
       reasoning = ''
@@ -166,6 +173,20 @@ export function visibleUserImages(event: HistoryEvent): ImageAttachmentRef[] {
     images.push(attachment as unknown as ImageAttachmentRef)
   }
   return images
+}
+
+/**
+ * Fold reasoning from the compact records of one settled model attempt.
+ * @param stream - Validated records from assistant/message or assistant/attempt.
+ * @returns Reasoning text including the latest completed reasoning block.
+ */
+export function streamReasoning(stream: readonly AssistantStreamRecord[]): string {
+  let text = ''
+  for (const record of stream) {
+    if (record.type === 'reasoning-chunks') text += record.texts.join('')
+    else if (record.type === 'chunk') text = foldReasoning(text, record.chunk)
+  }
+  return text
 }
 
 /** One committed assistant content block, already folded for Happy. */

@@ -11,10 +11,11 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
-import type { AskUserQuestionRequest, UserQuestionService } from '@deepseek-ai/dsh-user-questions'
+import type { AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
+import type {} from '@deepseek-ai/dsh-session-query'
 import { HostDesktopNotifier, isDesktopWindowFocused } from './notifier.ts'
 import { disposeWindowsToastChannel, ensureWindowsToastChannel } from './toast-channel.ts'
 import type { DesktopNotifier, NotifyRequest, NotifyResult, ToastWaitAction } from './types.ts'
@@ -25,7 +26,7 @@ export type { DesktopNotifier, NotifyChannel, NotifyRequest, NotifyResult, Toast
 export const name = 'task-notify'
 
 /** 等 agent 注册表就绪后再挂监听。 */
-export const inject = ['agents']
+export const inject = ['agents', 'sessionQuery']
 
 /** 部署可调项。非法值在加载时失败。 */
 export interface Config {
@@ -153,9 +154,10 @@ function titled(config: Config, events: readonly SessionEvent[] | undefined): st
  * 把一次刚结束的 agent 活动收成通知标题和正文。
  * @param agent - 刚回到 idle 的 agent。
  * @param config - 插件配置。
+ * @param events - sessionQuery 读取的已提交会话日志。
+ * @returns 带任务状态与最近回复预览的通知。
  */
-export function buildIdleRequest(agent: Agent, config: Config): NotifyRequest {
-  const events = agent.session.events
+export function buildIdleRequest(agent: Agent, config: Config, events: readonly SessionEvent[]): NotifyRequest {
   const outcome = outcomeLabel(lastTurnKind(events))
   const preview = lastAssistantPreview(events, config.previewMaxChars)
   const body = preview === undefined ? outcome : `${outcome}：${preview}`
@@ -187,14 +189,16 @@ export function buildApprovalRequest(req: ApprovalRequest, config: Config): Noti
  * 向用户提问时的通知文案。
  * @param request - userQuestions.ask 的原始请求。
  * @param config - 插件配置。
+ * @param events - 会话日志；独立提问传空数组。
+ * @returns 带会话标题与问题预览的通知。
  */
-export function buildQuestionRequest(request: AskUserQuestionRequest, config: Config): NotifyRequest {
+export function buildQuestionRequest(request: AskUserQuestionRequest, config: Config, events: readonly SessionEvent[]): NotifyRequest {
   const first = request.questions[0]
   const prompt = first === undefined ? '需要你回答' : first.question.trim()
   const prefix = first?.intent?.kind === 'plan-review' ? '需要你审阅计划' : '需要你回答'
   const body = first === undefined || prompt === '' ? prefix : `${prefix}：${prompt}`
   return {
-    title: titled(config, request.agent?.session.events),
+    title: titled(config, events),
     body: truncate(body, config.previewMaxChars),
     ...(request.agent === undefined ? {} : { sessionId: request.agent.id }),
     sound: config.sound,
@@ -253,6 +257,31 @@ async function fire(
 }
 
 /**
+ * Read committed history before composing a notification; unloading cancels delivery after the read.
+ * @param ctx - Host context with the session query service.
+ * @param service - Desktop notification service.
+ * @param config - Validated notification settings.
+ * @param agent - Session owner, absent for a standalone question.
+ * @param signal - Plugin lifetime.
+ * @param build - Compose the notification from the detached event log.
+ */
+async function fireFromSession(
+  ctx: Context,
+  service: TaskNotifyService,
+  config: Config,
+  agent: Agent | undefined,
+  signal: AbortSignal,
+  build: (events: readonly SessionEvent[]) => NotifyRequest,
+): Promise<void> {
+  try {
+    const events = agent === undefined ? [] : (await ctx.sessionQuery.readSession(agent.id)).events
+    if (!signal.aborted) await fire(ctx, service, config, build(events))
+  } catch (error) {
+    if (!signal.aborted) ctx.logger.warn('task-notify: ' + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
+/**
  * 弹出带按钮的审批气泡并等待。只有两个按钮返回裁决；关闭、超时、点空白、失败都是 deferred。
  * @param req - 当前审批请求，用于文案和 abort。
  * @returns 两个按钮算出裁决；其余情况都是 deferred。
@@ -298,6 +327,8 @@ export function apply(ctx: Context, config: Config): void {
   const notifier = new HostDesktopNotifier()
   const service = new TaskNotifyService(ctx, notifier, config)
   const seenRunning = new WeakSet<Agent>()
+  const lifetime = new AbortController()
+  ctx.effect(() => () => { lifetime.abort() }, 'task-notify: pending history reads')
   // 插件晚于任务启动才加载时，把当前已在跑的 agent 算作已经 running。
   for (const agent of ctx.agents.list()) {
     if (agent.status === 'running') seenRunning.add(agent)
@@ -312,7 +343,7 @@ export function apply(ctx: Context, config: Config): void {
     seenRunning.delete(agent)
     if (!config.enabled || !config.notifyOnIdle) return
     if (skipAgent(agent, config)) return
-    void fire(ctx, service, config, buildIdleRequest(agent, config))
+    void fireFromSession(ctx, service, config, agent, lifetime.signal, events => buildIdleRequest(agent, config, events))
   })
 
   // 审批：点气泡按钮则短路裁决；关掉立刻 next 给网页黄框；超时同样 next。
@@ -329,20 +360,11 @@ export function apply(ctx: Context, config: Config): void {
     return next()
   }, { prepend: true })
 
-  ctx.inject(['userQuestions'], (inner) => {
-    const questions = inner.userQuestions as UserQuestionService
-    const original = questions.ask
-    questions.ask = function wrappedAsk(
-      this: UserQuestionService,
-      request: AskUserQuestionRequest,
-    ) {
-      if (config.enabled && config.notifyOnQuestion && !skipAgent(request.agent, config)) {
-        void fire(ctx, service, config, buildQuestionRequest(request, config))
-      }
-      return original.call(this, request)
+  ctx.on('user-questions/request', (request, next) => {
+    if (config.enabled && config.notifyOnQuestion && !skipAgent(request.agent, config)) {
+      void fireFromSession(ctx, service, config, request.agent, lifetime.signal,
+        events => buildQuestionRequest(request, config, events))
     }
-    inner.effect(() => () => {
-      questions.ask = original
-    }, 'task-notify: restore userQuestions.ask')
-  })
+    return next()
+  }, { prepend: true })
 }

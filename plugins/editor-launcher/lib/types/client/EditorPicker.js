@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 /** The Session-header editor picker: one capsule button opening a Menu of detected editors. */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { IconChevronDownOutline14, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconChevronDownOutlineMedium, IconRefreshOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives';
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives';
 import { readPreferred, writePreferred } from "./preference.js";
 import css from './EditorPicker.module.css';
@@ -64,7 +64,7 @@ export function EditorPicker({ listEditors, refreshEditors, t }) {
         {
             id: REFRESH_ID,
             label: '',
-            icon: (_jsx("span", { role: "img", "aria-label": t('menu.refresh'), title: t('menu.refresh'), children: _jsx(IconRefreshOutline14, { size: 14 }) })),
+            icon: (_jsx("span", { role: "img", "aria-label": t('menu.refresh'), title: t('menu.refresh'), children: _jsx(IconRefreshOutlineMedium, { size: 14 }) })),
         },
     ];
     return (_jsx(Menu, { open: open, align: "end", portal: true, items: items, footer: footer, selectedId: preferred?.id, onSelect: (id) => {
@@ -78,6 +78,6 @@ export function EditorPicker({ listEditors, refreshEditors, t }) {
             writePreferred({ id: editor.id, name: editor.name });
             setPreferred({ id: editor.id, name: editor.name });
             setOpen(false);
-        }, onClose: () => { setOpen(false); }, anchor: (_jsxs("button", { type: "button", className: css.pickerButton, "aria-haspopup": "menu", "aria-expanded": open, onClick: () => { setOpen(value => !value); }, children: [_jsx("span", { children: label }), _jsx(IconChevronDownOutline14, { size: 12 })] })) }));
+        }, onClose: () => { setOpen(false); }, anchor: (_jsxs("button", { type: "button", className: css.pickerButton, "aria-haspopup": "menu", "aria-expanded": open, onClick: () => { setOpen(value => !value); }, children: [_jsx("span", { children: label }), _jsx(IconChevronDownOutlineMedium, { size: 12 })] })) }));
 }
 //# sourceMappingURL=EditorPicker.js.map

@@ -3,7 +3,7 @@ import { EditorPicker } from "./EditorPicker.js";
 import { en, NS, zh } from "./locales.js";
 import { readPreferred } from "./preference.js";
 /** Required client services: the slot registry, locale, connection RPC, and the session list store. */
-export const inject = ['slots', 'locale', 'connection', 'sessions'];
+export const inject = ['slots', 'locale', 'connection', 'sessions', 'uiSession', 'remote'];
 /** A bare filename (with extension) or a path containing a separator. */
 function looksLikeFilePath(text) {
     if (text.includes('/') || text.includes('\\'))
@@ -11,14 +11,16 @@ function looksLikeFilePath(text) {
     return /^[^\s./\\]+\.\w+$/.test(text);
 }
 /**
- * Resolve a workspace-relative path into the Host-facing absolute spelling
- * (mirror of the runtime helper; kept local so the browser bundle stays free
- * of cross-package value imports).
+ * Resolve a file label using the selected Session's workspace and the Host home.
  * @param cwd - session workspace root, when known.
- * @param path - absolute or workspace-relative path.
+ * @param path - absolute, home-relative, or workspace-relative path.
+ * @param home - Host home directory used for abbreviated tool labels.
  * @returns an absolute path when a workspace root is available, otherwise the original path.
  */
-function resolveWorkspacePath(cwd, path) {
+function resolveWorkspacePath(cwd, path, home) {
+    if (path === '~' || /^~[/\\]/.test(path)) {
+        return home === undefined ? path : home.replace(/[/\\]+$/, '') + path.slice(1);
+    }
     if (path.startsWith('/') || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\'))
         return path;
     if (cwd === undefined || cwd === '')
@@ -127,14 +129,15 @@ function unwrap(result) {
  */
 async function openWithPreferred(connection, ctx, editorId, pathLabel) {
     const snapshot = ctx.sessions.list.getSnapshot();
-    const cwd = snapshot.current === undefined ? undefined : snapshot.byId[snapshot.current]?.cwd;
-    const filePath = resolveWorkspacePath(cwd, pathLabel);
+    const selected = ctx.uiSession.adapter.current.getSnapshot().key;
+    const cwd = Object.entries(snapshot.byId).find(([id]) => id === selected)?.[1].cwd;
+    const filePath = resolveWorkspacePath(cwd, pathLabel, ctx.remote.$host.home);
     const result = await connection.rpc.call('/api', 'editorLauncher/openWith', {
         args: { editorId, filePath },
     });
     if (result.ok && result.value.ok)
         return;
     // Fall back to the OS default application so the click always has an effect.
-    await connection.api.host.openPath({ path: filePath });
+    await ctx.remote.session.openWorkspacePath({ path: filePath });
 }
 //# sourceMappingURL=index.js.map

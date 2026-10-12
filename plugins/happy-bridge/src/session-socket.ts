@@ -3,6 +3,7 @@
 import { createId } from '@paralleldrive/cuid2'
 import { createEnvelope, type SessionEnvelope, type SessionEvent as HappyEvent } from '@slopus/happy-wire'
 import { io, type Socket } from 'socket.io-client'
+import { catalogModelPick, sameCatalogPick } from './grant.ts'
 import { HAPPY_CLIENT } from './happy-version.ts'
 import { decryptB64, encryptB64, type CryptoContext } from './encryption.ts'
 import { parseCommunicationRpc, parseHappyInbound, parsePermissionRpc, type HappyInbound } from './inbound.ts'
@@ -20,9 +21,7 @@ export interface SessionHandlers {
   /** Phone tapped Stop. Happy App `sessionAbort` for Rig sends `{}`. */
   onAbort: () => void
   /** App archived or deleted this Happy session. */
-  onArchived: () => void
-  /** App restored an archived session (lifecycle back to running). */
-  onResumed: () => void
+  onArchived: () => void | Promise<void>
   /** Phone changed Happy session metadata (model picker, without sending). */
   onCatalog: (meta: Record<string, unknown>) => void
   /** Log line. */
@@ -38,6 +37,14 @@ export type InboundMessage = HappyInbound
 export class HappySessionSocket {
   private socket: Socket | undefined
   private metadataVersion = 0
+  private externalSelectionRevision = 0
+  private metadata: Record<string, unknown> = {}
+  private previousModes: { modelMode: unknown; effortLevel: unknown } | undefined
+  private readonly publications = new Map<string, number>()
+  private metadataTail: Promise<void> = Promise.resolve()
+  private heartbeatEnabled = false
+  private disposed = false
+  private messageSeq = -1
   private agentStateVersion = 0
   private aliveTimer: ReturnType<typeof setInterval> | undefined
   private turnId: string | undefined
@@ -60,8 +67,15 @@ export class HappySessionSocket {
     private readonly handlers: SessionHandlers,
   ) {}
 
-  /** Connect, register permission + abort + killSession, start keepalive. */
-  async connect(initialMetadataVersion = 0, initialAgentStateVersion = 0): Promise<void> {
+  /**
+   * Connect the message/RPC channel without enabling online presence.
+   * @param initialMetadataVersion - version returned by create/load.
+   * @param initialAgentStateVersion - permission-state version returned by create/load.
+   * @param initialMetadata - existing cloud snapshot; establishes a baseline, not a user action.
+   */
+  async connect(initialMetadataVersion = 0, initialAgentStateVersion = 0, initialMetadata: Record<string, unknown> = {}): Promise<void> {
+    this.previousModes = { modelMode: initialMetadata.modelMode, effortLevel: initialMetadata.effortLevel }
+    this.metadata = initialMetadata
     this.metadataVersion = initialMetadataVersion
     this.agentStateVersion = initialAgentStateVersion
     const socket = io(this.serverUrl, {
@@ -79,11 +93,12 @@ export class HappySessionSocket {
       timeout: 20000,
       withCredentials: true,
     })
+    if (this.disposed) { socket.disconnect(); return }
     this.socket = socket
     socket.on('update', (data: {
       body?: {
         t?: string
-        message?: { content?: { t?: string; c?: string } }
+        message?: { seq?: number; content?: { t?: string; c?: string } }
         metadata?: { version?: number; value?: string }
       }
     }) => {
@@ -94,6 +109,9 @@ export class HappySessionSocket {
       if (data.body?.t !== 'new-message') return
       const content = data.body.message?.content
       if (content?.t !== 'encrypted' || typeof content.c !== 'string') return
+      const seq = data.body.message?.seq
+      if (seq !== undefined && seq <= this.messageSeq) return
+      if (seq !== undefined) this.messageSeq = seq
       const plain = decryptB64(this.crypto, content.c)
       this.dispatchInbound(plain)
     })
@@ -111,6 +129,7 @@ export class HappySessionSocket {
     } catch (error) {
       this.handlers.log(`${error instanceof Error ? error.message : String(error)}，会话 ${this.happySessionId} 继续自动重连`)
     }
+    if (this.disposed) return
     await registerRpc(socket, this.happySessionId, 'permission', this.crypto, (params) => {
       this.handlers.onPermission(asPermission(params))
       return { ok: true }
@@ -126,20 +145,22 @@ export class HappySessionSocket {
       return { ok: true }
     }, this.handlers.log)
     this.rpcMethods.push(`${this.happySessionId}:abort`)
-    await registerRpc(socket, this.happySessionId, 'killSession', this.crypto, () => {
+    await registerRpc(socket, this.happySessionId, 'killSession', this.crypto, async () => {
       this.stopKeepAlive()
-      this.handlers.onArchived()
+      await this.handlers.onArchived()
       // Happy App checks `success`, not `ok`. A mismatch toasts 归档失败
       // even when POST /archive and the web hide both landed.
       return { success: true, message: 'Session archived' }
     }, this.handlers.log)
     this.rpcMethods.push(`${this.happySessionId}:killSession`)
+    if (this.disposed) return
     this.rpcReady = true
     this.keepAlive(this.thinking)
   }
 
   /** Stop session-alive so an App archive can stick. */
   stopKeepAlive(): void {
+    this.heartbeatEnabled = false
     if (this.aliveTimer !== undefined) {
       clearInterval(this.aliveTimer)
       this.aliveTimer = undefined
@@ -148,6 +169,8 @@ export class HappySessionSocket {
 
   /** Close the socket and keepalive. */
   dispose(): void {
+    this.disposed = true
+    this.publications.clear()
     this.stopKeepAlive()
     this.socket?.removeAllListeners()
     this.socket?.disconnect()
@@ -268,6 +291,7 @@ export class HappySessionSocket {
    * @param thinking - `agent/status === running`.
    */
   keepAlive(thinking: boolean): void {
+    if (!this.heartbeatEnabled || this.disposed) return
     this.thinking = thinking
     this.emitAlive()
     this.ensureAliveTimer()
@@ -280,6 +304,7 @@ export class HappySessionSocket {
    * @param thinking - `true` while the Host turn is still executing.
    */
   keepAliveNow(thinking: boolean): void {
+    if (!this.heartbeatEnabled || this.disposed) return
     this.thinking = thinking
     this.socket?.emit('session-alive', {
       sid: this.happySessionId,
@@ -300,7 +325,15 @@ export class HappySessionSocket {
     this.keepAlive(this.thinking)
   }
 
+  /** Enable presence only after the bridge has committed a visible session. */
+  startKeepAlive(): void {
+    if (this.disposed) return
+    this.heartbeatEnabled = true
+    this.keepAlive(this.thinking)
+  }
+
   private emitAlive(): void {
+    if (!this.heartbeatEnabled || this.disposed) return
     this.socket?.volatile.emit('session-alive', {
       sid: this.happySessionId,
       time: Date.now(),
@@ -325,29 +358,51 @@ export class HappySessionSocket {
   /**
    * Encrypt and push session metadata.
    * @param metadata - plaintext catalog object.
+   * @returns completion of the serialized publication; conflicts with new phone picks defer to their Host update.
    */
-  updateMetadata(metadata: unknown): void {
-    const socket = this.socket
-    if (socket === undefined) return
-    this.emitMetadata(socket, metadata, this.metadataVersion, 0)
+  updateMetadata(metadata: Record<string, unknown>): Promise<void> {
+    const task = this.metadataTail.then(() => this.publishMetadata(metadata))
+    this.metadataTail = task.catch(error => {
+      this.handlers.log('元数据同步失败：' + String(error))
+    })
+    return task
   }
 
-  private emitMetadata(
-    socket: Socket,
-    metadata: unknown,
-    expected: number,
-    attempt: number,
-  ): void {
-    socket.emit('update-metadata', {
-      sid: this.happySessionId,
-      metadata: encryptB64(this.crypto, metadata),
-      expectedVersion: expected,
-    }, (answer: { result?: string; version?: number }) => {
-      if (typeof answer?.version === 'number') this.metadataVersion = answer.version
-      if (answer?.result === 'version-mismatch' && attempt < 3 && typeof answer.version === 'number') {
-        this.emitMetadata(socket, metadata, answer.version, attempt + 1)
+  private async publishMetadata(owned: Record<string, unknown>): Promise<void> {
+    const socket = this.socket
+    if (socket === undefined || this.disposed) return
+    const selectionRevision = this.externalSelectionRevision
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (this.disposed) return
+      const merged = { ...this.metadata, ...owned }
+      const expected = this.metadataVersion
+      const value = encryptB64(this.crypto, merged)
+      this.publications.set(value, expected + 1)
+      const answer = await new Promise<{ result?: string; version?: number; metadata?: string }>((resolve, reject) => {
+        socket.timeout(8000).emit('update-metadata', {
+          sid: this.happySessionId, metadata: value, expectedVersion: expected,
+        }, (error: Error | null, result: { result?: string; version?: number; metadata?: string }) => {
+          if (error) reject(error)
+          else resolve(result)
+        })
+      })
+      if (this.disposed) return
+      if (answer.result === 'success') {
+        this.onMetadataUpdate({ version: answer.version ?? expected + 1, value: answer.metadata ?? value })
+        return
       }
-    })
+      if (answer.result !== 'version-mismatch' || typeof answer.metadata !== 'string' || typeof answer.version !== 'number') {
+        throw new Error('Happy rejected metadata update')
+      }
+      const previous = catalogModelPick(this.metadata)
+      this.onMetadataUpdate({ version: answer.version, value: answer.metadata })
+      if (this.externalSelectionRevision !== selectionRevision) return
+      const latest = catalogModelPick(this.metadata)
+      // A new phone pick owns the next publication; its queued Host write
+      // will publish the resulting selection instead of replaying this one.
+      if (latest !== undefined && !sameCatalogPick(previous, latest)) return
+    }
+    throw new Error('Happy metadata version conflict')
   }
 
   /**
@@ -368,6 +423,7 @@ export class HappySessionSocket {
     expected: number,
     attempt: number,
   ): void {
+    if (this.disposed) return
     socket.emit('update-state', {
       sid: this.happySessionId,
       agentState: encryptB64(this.crypto, agentState),
@@ -399,21 +455,24 @@ export class HappySessionSocket {
   }
 
   private onMetadataUpdate(metadata: { version?: number; value?: string } | undefined): void {
-    if (typeof metadata?.value !== 'string') return
-    if (typeof metadata.version === 'number') this.metadataVersion = metadata.version
+    if (this.disposed || typeof metadata?.value !== 'string' || typeof metadata.version !== 'number') return
+    if (metadata.version <= this.metadataVersion) return
     let record: Record<string, unknown>
-    try {
-      record = asRecord(decryptB64(this.crypto, metadata.value))
-    } catch {
-      return
+    try { record = asRecord(decryptB64(this.crypto, metadata.value)) } catch { return }
+    const previous = catalogModelPick(this.metadata)
+    const own = this.publications.get(metadata.value) === metadata.version
+    for (const [value, version] of this.publications) {
+      if (version <= metadata.version) this.publications.delete(value)
     }
-    const lifecycle = record.lifecycleState
-    if (lifecycle === 'archiveRequested' || lifecycle === 'archived') {
-      this.handlers.onArchived()
-      return
+    this.metadataVersion = metadata.version
+    this.metadata = record
+    const next = catalogModelPick(record)
+    const explicitChange = record.modelMode !== this.previousModes?.modelMode || record.effortLevel !== this.previousModes?.effortLevel
+    this.previousModes = { modelMode: record.modelMode, effortLevel: record.effortLevel }
+    if (!own && explicitChange && next !== undefined && !sameCatalogPick(previous, next)) {
+      this.externalSelectionRevision += 1
+      this.handlers.onCatalog(record)
     }
-    if (lifecycle === 'running') this.handlers.onResumed()
-    this.handlers.onCatalog(record)
   }
 
   private dispatchInbound(plain: unknown): void {

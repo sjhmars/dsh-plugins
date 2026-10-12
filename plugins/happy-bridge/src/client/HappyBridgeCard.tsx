@@ -1,8 +1,9 @@
-/** Settings → Plugins card: pairing QR, copy links, remote grant. */
+/** Plugins configuration card: pairing QR, copy links, remote grant. */
 
 import { useEffect, useState, type ReactNode } from 'react'
-import type { SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PairingStatus, RemoteGrant } from '../types.ts'
 import { NS } from './locales.ts'
 import css from './HappyBridgeCard.module.css'
@@ -24,13 +25,13 @@ export interface HappyBridgeInjected {
   /** Drop the current login and show a new QR. */
   rePair: () => Promise<PairingStatus>
   /** Persist the remote-grant field. */
-  setGrant: (grant: RemoteGrant) => Promise<void>
+  setGrant: (grant: RemoteGrant) => Promise<boolean>
   /** Persist the enabled field. */
-  setEnabled: (enabled: boolean) => Promise<void>
+  setEnabled: (enabled: boolean) => Promise<boolean>
   hooks: {
     /** Live settings snapshot for this namespace. */
     happySettings: {
-      getSnapshot(): SettingsScopeSnapshot<HappyBridgeSettings>
+      getSnapshot(): ConfigFormSnapshot<HappyBridgeSettings>
       subscribe(fn: () => void): () => void
     }
   }
@@ -38,6 +39,7 @@ export interface HappyBridgeInjected {
 
 /** Card props: locale seat plus injected RPC. */
 export type HappyBridgeCardProps =
+  & PropsRuntime<'plugins.bundle.config'>
   & PropsLocale<typeof NS>
   & InjectFace<HappyBridgeInjected>
 
@@ -55,6 +57,8 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
   const writable = snap.writable
   const [open, setOpen] = useState(true)
   const [status, setStatus] = useState<PairingStatus | undefined>(undefined)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(false)
   const [copied, setCopied] = useState<'mobile' | 'web' | undefined>(undefined)
 
   useEffect(() => {
@@ -70,6 +74,14 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
     }
   }, [getStatus])
 
+  const save = async (operation: () => Promise<boolean>): Promise<void> => {
+    setSaving(true)
+    setSaveError(false)
+    try { setSaveError(!await operation()) }
+    catch (_error) { setSaveError(true) }
+    finally { setSaving(false) }
+  }
+
   const copy = async (which: 'mobile' | 'web', value: string | undefined): Promise<void> => {
     if (value === undefined) return
     await navigator.clipboard.writeText(value)
@@ -78,7 +90,7 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
   }
 
   return (
-    <li className={css.card}>
+    <section className={css.card}>
       <button
         type="button"
         className={css.header}
@@ -102,8 +114,8 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
                 className={css.checkbox}
                 type="checkbox"
                 checked={enabled}
-                disabled={!writable}
-                onChange={event => void setEnabled(event.target.checked)}
+                disabled={!writable || saving}
+                onChange={event => { const value = event.target.checked; void save(() => setEnabled(value)) }}
               />
               {' '}
               {t('enabled')}
@@ -144,8 +156,8 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
               <select
                 className={css.select}
                 value={grant}
-                disabled={!writable}
-                onChange={event => void setGrant(event.target.value as RemoteGrant)}
+                disabled={!writable || saving}
+                onChange={event => { const value = event.target.value as RemoteGrant; void save(() => setGrant(value)) }}
               >
                 {GRANTS.map(value => (
                   <option key={value} value={value}>{t(`grant.${value}`)}</option>
@@ -153,9 +165,10 @@ export function HappyBridgeCard(props: HappyBridgeCardProps): ReactNode {
               </select>
             </label>
             <p className={css.status}>{t('grant.hint')}</p>
+            {saveError ? <p className={css.error} role="status">{t('saveError')}</p> : null}
           </div>
         )
         : null}
-    </li>
+    </section>
   )
 }

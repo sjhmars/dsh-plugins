@@ -1,23 +1,35 @@
 {
   "name": "@sjhmars/task-notify",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Desktop notification when an agent finishes a task or waits for approval or a question, on Web and Desktop",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
-    "files": ["lib/index.js", "lib/invariant.js", "lib/icon.png", "lib/show-toast.ps1", "lib/show-approval-ui.ps1", "lib/toast-activate.vbs", "lib/types/**/*.d.ts", "cordis.patch.yml"],
+  "files": [
+    "lib/index.js",
+    "lib/icon.png",
+    "lib/show-toast.ps1",
+    "lib/show-approval-ui.ps1",
+    "lib/toast-activate.vbs",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown -c tsdown.config.ts && node scripts/copy-icon.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "license": "MIT",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "disclosure": {
     "cloud": false,
     "network": [],
@@ -37,21 +49,31 @@
     "directory": "plugins/task-notify"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=0.1.0-rc.5",
-    "@deepseek-ai/schemastery": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-user-approval": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-user-questions": ">=0.1.0-rc.5"
+    "@deepseek-ai/cordis": ">=4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": ">=3.18.5-alpha.1",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-user-approval": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-user-questions": ">=0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-query": ">=0.2.1-alpha.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
     "tsdown": "^0.22.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@deepseek-ai/cordis": "link:../../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/schemastery": "link:../../../deepseek-harness/vendor/schemastery",
+    "@deepseek-ai/dsh-agent": "link:../../../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-session": "link:../../../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-typert-protocol": "link:../../../deepseek-harness/packages/typert/protocol",
+    "@deepseek-ai/dsh-user-approval": "link:../../../deepseek-harness/packages/interaction/user-approval",
+    "@deepseek-ai/dsh-user-questions": "link:../../../deepseek-harness/packages/interaction/user-questions",
+    "@deepseek-ai/dsh-session-query": "link:../../../deepseek-harness/packages/session-query/session-query"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

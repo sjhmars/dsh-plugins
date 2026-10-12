@@ -1,32 +1,36 @@
 /** Settings card with explicit save, validation and localized feedback. */
 import { useEffect, useState, type ReactNode } from 'react'
-import type { SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { defaults, validateConfig } from '../config.ts'
 import type { Config } from '../config.ts'
 import { NS } from './locales.ts'
 
 export interface Injected {
-  save(value: Config): Promise<void>
+  save(value: Config, revision?: number): Promise<boolean>
   hooks: { segmentedSettings: {
-    getSnapshot(): SettingsScopeSnapshot<Config>
+    getSnapshot(): ConfigFormSnapshot<Config>
     subscribe(listener: () => void): () => void
   } }
 }
-export type CardProps = PropsLocale<typeof NS> & InjectFace<Injected>
+export type CardProps = PropsRuntime<'plugins.bundle.config'> & PropsLocale<typeof NS> & InjectFace<Injected>
 const numeric = ['contextRatio', 'maxShrinkRetries', 'maxCalls'] as const
-/** Render the shared Web/Desktop plugin settings. */
+/**
+ * Render the shared Web/Desktop plugin settings.
+ * @param props - Configuration writes, live snapshot hook, and locale dictionary.
+ * @returns Bundle configuration form with validation and save feedback.
+ */
 export function Card(props: CardProps): ReactNode {
   const snap = props.useSegmentedSettings(snapshot => snapshot)
   const [draft, setDraft] = useState<Config>({ ...defaults, ...snap.value })
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'invalid'>('idle')
   useEffect(() => { setDraft({ ...defaults, ...snap.value }); setState('idle') }, [snap.value])
   const submit = async (): Promise<void> => {
-    try { validateConfig(draft) } catch { setState('invalid'); return }
+    try { validateConfig(draft) } catch (_error) { setState('invalid'); return }
     setState('saving')
-    try { await props.save(draft); setState('saved') } catch { setState('error') }
+    try { setState(await props.save(draft, snap.revision) ? 'saved' : 'error') } catch (_error) { setState('error') }
   }
-  return <li style={{ listStyle: 'none', padding: 20, border: '1px solid var(--border-color, #7775)', borderRadius: 12 }}>
+  return <section style={{ listStyle: 'none', padding: 20, border: '1px solid var(--border-color, #7775)', borderRadius: 12 }}>
     <h3>{props.t('title')}</h3>
     <p>{props.t('description')}</p>
     <form onSubmit={event => { event.preventDefault(); void submit() }}>
@@ -47,5 +51,5 @@ export function Card(props: CardProps): ReactNode {
     <p>{props.t('hint')}</p>
     {!snap.writable ? <p>{props.t('readOnly')}</p> : null}
     {state === 'saved' || state === 'error' || state === 'invalid' ? <p role="status">{props.t(state)}</p> : null}
-  </li>
+  </section>
 }

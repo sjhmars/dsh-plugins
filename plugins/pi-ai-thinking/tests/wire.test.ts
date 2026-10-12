@@ -138,7 +138,7 @@ async function runRequest(ctx: InstanceType<typeof cordis.Context>, effort: 'off
   const assembler = new llm.BlockAssembler()
   const messages = [llm.createUserMessage({
     content: [{ type: 'text', text: '回复 ok。' }],
-    source: { kind: 'plugin', plugin: 'pi-ai-thinking-test' },
+    source: { kind: 'user' },
   })]
   for await (const chunk of ctx.llm.stream({
     provider: 'gateway',
@@ -154,7 +154,9 @@ async function runRequest(ctx: InstanceType<typeof cordis.Context>, effort: 'off
 }
 
 for (const protocol of ['openai-completions', 'openai-responses', 'anthropic-messages'] as const) {
-  test(`${protocol} 的四档思考请求可流式完成并保留工具声明`, async () => {
+  test(`${protocol} 的四档思考请求可流式完成并保留工具声明`, async t => {
+    const previousKey = process.env.PI_TEST_KEY
+    t.after(() => { if (previousKey === undefined) delete process.env.PI_TEST_KEY; else process.env.PI_TEST_KEY = previousKey })
     process.env.PI_TEST_KEY = 'test-key'
     const mock = await startMock(protocol)
     const ctx = new cordis.Context()
@@ -195,7 +197,7 @@ for (const protocol of ['openai-completions', 'openai-responses', 'anthropic-mes
           ['none', 'low', 'high', 'max'],
         )
       } else {
-        assert.deepEqual(mock.paths, Array(4).fill('/v1/messages'))
+        assert.deepEqual(mock.paths, Array(4).fill('/v1/messages?beta=true'))
         assert.deepEqual(
           mock.requests.map(request => (request.thinking as { type?: unknown; budget_tokens?: unknown } | undefined)?.type),
           ['disabled', 'enabled', 'enabled', 'enabled'],

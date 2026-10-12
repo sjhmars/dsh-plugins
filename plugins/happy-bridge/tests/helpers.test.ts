@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { Context } from '@deepseek-ai/cordis'
+import { buildSessionMetadata } from '../src/catalogs.ts'
 import { test } from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -404,7 +406,6 @@ test('历史回放保留真人问答和工具对，跳过插件注入和助手�
     { type: 'turn/start', time: 1, data: {} },
     { type: 'user/message', time: 2, data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '注入' }] } },
     { type: 'user/message', time: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] } },
-    { type: 'assistant/chunk', time: 4, data: { chunk: { type: 'text-delta', text: 'hi' } } },
     {
       type: 'assistant/message',
       time: 5,
@@ -479,11 +480,12 @@ test('Think 是一行摘要，工具描述跟网页一样', () => {
   })
 })
 
-test('思考只在分片里时，回放仍补 Think 卡片', () => {
+test('思考只在嵌入的 stream 里时，回放仍补 Think 卡片', () => {
   const items = historyItems([
-    { type: 'assistant/chunk', time: 1, data: { chunk: { type: 'reasoning-delta', text: '先看配置' } } },
-    { type: 'assistant/chunk', time: 2, data: { chunk: { type: 'block-end', block: { type: 'reasoning', text: '先看配置' } } } },
-    { type: 'assistant/message', time: 3, data: { message: { content: [{ type: 'text', text: '可以改绑定' }] } } },
+    { type: 'assistant/message', time: 3, data: {
+      stream: [{ type: 'reasoning-chunks', time0: 1, index: 0, dt: [1], texts: ['先看', '配置'] }],
+      message: { content: [{ type: 'text', text: '可以改绑定' }] },
+    } },
   ])
   assert.deepEqual(items, [
     {
@@ -787,3 +789,43 @@ test('电脑附件走 request-upload 再 PUT 密文，S3 地址不加 Bearer', a
     globalThis.fetch = original
   }
 })
+
+
+test('失败 attempt 的思考和下一次成功的思考分别回放，最终思考块只显示一次', () => {
+  const items = historyItems([
+    { type: 'assistant/attempt', time: 2, data: { stream: [
+      { type: 'reasoning-chunks', time0: 1, index: 0, dt: [], texts: ['first attempt'] },
+    ] } },
+    { type: 'assistant/message', time: 4, data: {
+      stream: [{ type: 'reasoning-chunks', time0: 3, index: 0, dt: [], texts: ['second attempt'] }],
+      message: { content: [{ type: 'reasoning', text: 'second attempt' }, { type: 'text', text: 'done' }] },
+    } },
+  ])
+  assert.deepEqual(items.filter(item => item.kind === 'tool-start').map(item => item.args.text), ['first attempt', 'second attempt'])
+  assert.deepEqual(items.filter(item => item.kind === 'assistant').map(item => item.text), ['done'])
+})
+
+
+for (const available of [true, false]) {
+  test('未打开会话从 permissions 投影读取预设并释放 observation: ' + available, async t => {
+    const ctx = new Context()
+    t.after(() => ctx.fiber.dispose())
+    let observed, disposed = 0
+    ctx.provide('permissionPresets', { names: ['workspace-write', 'danger-full-access'],
+      current() { throw Error('Dormant sessions do not have a live Session') },
+    })
+    ctx.provide('sessionQuery', { async observeSession(id) {
+      observed = id
+      return { projections: { values: available ? { permissions: { currentValue: 'danger-full-access' } } : {} },
+        [Symbol.dispose]() { disposed++ },
+      }
+    } })
+    const operation = buildSessionMetadata(ctx, {
+      sessionId: 's1', cwd: 'H:/workspace', happyPath: '/dsh-workspaces/work', events: [],
+    }, 'machine', 'history', undefined, 'full')
+    if (available) assert.equal((await operation).currentOperatingModeCode, 'danger-full-access')
+    else await assert.rejects(operation, /permissions projection/)
+    assert.equal(observed, 's1')
+    assert.equal(disposed, 1)
+  })
+}

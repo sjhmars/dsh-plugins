@@ -1,7 +1,7 @@
-/** Settings → Plugins card: pairing QR, copy links, remote grant. */
+/** Plugins configuration card: pairing QR, copy links, remote grant. */
 import { type ReactNode } from 'react';
-import type { SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client';
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
+import type { ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client';
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { PairingStatus, RemoteGrant } from '../types.ts';
 import { NS } from './locales.ts';
 /** Fields this card reads from the `happy-bridge` settings namespace. */
@@ -20,19 +20,19 @@ export interface HappyBridgeInjected {
     /** Drop the current login and show a new QR. */
     rePair: () => Promise<PairingStatus>;
     /** Persist the remote-grant field. */
-    setGrant: (grant: RemoteGrant) => Promise<void>;
+    setGrant: (grant: RemoteGrant) => Promise<boolean>;
     /** Persist the enabled field. */
-    setEnabled: (enabled: boolean) => Promise<void>;
+    setEnabled: (enabled: boolean) => Promise<boolean>;
     hooks: {
         /** Live settings snapshot for this namespace. */
         happySettings: {
-            getSnapshot(): SettingsScopeSnapshot<HappyBridgeSettings>;
+            getSnapshot(): ConfigFormSnapshot<HappyBridgeSettings>;
             subscribe(fn: () => void): () => void;
         };
     };
 }
 /** Card props: locale seat plus injected RPC. */
-export type HappyBridgeCardProps = PropsLocale<typeof NS> & InjectFace<HappyBridgeInjected>;
+export type HappyBridgeCardProps = PropsRuntime<'plugins.bundle.config'> & PropsLocale<typeof NS> & InjectFace<HappyBridgeInjected>;
 /**
  * Render the Happy remote plugin card.
  * @param props - locale + injected Host RPC.

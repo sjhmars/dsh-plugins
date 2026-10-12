@@ -17,20 +17,21 @@ window.__ModuleLoader__.load({
 			document.head.appendChild(tag);
 		}
 		var PluginInstallTab_module_css_default = {
-			"title": "_3WBSWa_title",
-			"row": "_3WBSWa_row",
 			"hint": "_3WBSWa_hint",
-			"section": "_3WBSWa_section",
-			"log": "_3WBSWa_log"
+			"log": "_3WBSWa_log",
+			"row": "_3WBSWa_row",
+			"title": "_3WBSWa_title",
+			"section": "_3WBSWa_section"
 		};
 		//#endregion
 		//#region src/client/PluginInstallTab.tsx
-		/** 设置 → 插件：只填 npm 包名安装。 */
+		/** Plugins bundle page for installing npm names through the official manager. */
 		/**
 		* 包名输入与安装日志。
-		* @param props - 插槽运行时 + 文案 + RPC。
+		* @param props - 插槽运行时、文案和安装请求。
+		* @returns 安装输入框与官方操作结果。
 		*/
-		function PluginInstallTab({ install, target, t }) {
+		function PluginInstallTab({ install, target, t, view }) {
 			const [packageName, setPackageName] = (0, react.useState)("");
 			const [busy, setBusy] = (0, react.useState)(false);
 			const [profile, setProfile] = (0, react.useState)();
@@ -39,13 +40,20 @@ window.__ModuleLoader__.load({
 				let cancelled = false;
 				target().then((next) => {
 					if (!cancelled) setProfile(next.profile);
+				}, (error) => {
+					if (!cancelled) setResult({
+						ok: false,
+						code: 1,
+						stdout: "",
+						stderr: error instanceof Error ? error.message : String(error)
+					});
 				});
 				return () => {
 					cancelled = true;
 				};
 			}, [target]);
 			const submit = () => {
-				if (busy) return;
+				if (busy || profile === void 0 || packageName.trim() === "") return;
 				setBusy(true);
 				setResult(void 0);
 				install(packageName).then((next) => {
@@ -61,11 +69,18 @@ window.__ModuleLoader__.load({
 					setBusy(false);
 				});
 			};
+			let status = "failure";
+			if (result?.ok) {
+				if (result.kind === "dependency") status = "dependencyRestart";
+				else if (result.kind === "bundle" && result.enabled === false) status = "bundleDisabled";
+				else status = "restart";
+			}
 			const log = result === void 0 ? void 0 : [
-				result.ok ? t("success") : t("failure"),
+				t(status),
 				result.stdout,
 				result.stderr
 			].filter((part) => part.length > 0).join("\n");
+			if (view === "summary") return t("title");
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: PluginInstallTab_module_css_default.section,
 				children: [
@@ -89,7 +104,7 @@ window.__ModuleLoader__.load({
 							}
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 							type: "button",
-							disabled: busy || packageName.trim().length === 0,
+							disabled: busy || profile === void 0 || packageName.trim().length === 0,
 							onClick: submit,
 							children: busy ? t("installing") : t("install")
 						})]
@@ -104,37 +119,38 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region src/client/locales.ts
-		/** 安装页文案。 */
+		/** Localized installer copy. */
 		const NS = "plugin-install";
-		/** 简体中文。 */
+		/** Simplified Chinese. */
 		const zh = {
-			tab: "安装插件",
 			title: "用包名安装",
-			hint: "只填 npm 包名（可带 @版本），例如 @sjhmars/task-notify 或 @sjhmars/task-notify@0.2.0。写入 {profile} profile（网页版是 web，桌面客户端是 desktop；两边互不相通）。装完或换版本都会热挂载，刷新页面即可；更新本安装器自己需重启。",
+			hint: "支持 npm 插件和普通组件，可带 @版本。写入当前 {profile} profile，安装后重启应用。",
 			placeholder: "@scope/package",
 			install: "安装",
 			installing: "正在安装…",
-			success: "安装成功，已热挂载；界面部分刷新页面即可。",
-			failure: "安装失败"
+			restart: "安装完成，请重启应用后生效。",
+			dependencyRestart: "组件已安装，请重启应用。已配置的组件更新后生效；首次安装还需在配置文件中启用。",
+			bundleDisabled: "安装完成，该插件仍处于停用状态。请在 Plugins 页启用后重启应用。",
+			failure: "安装未完成"
 		};
-		/** English copy. */
+		/** English. */
 		const en = {
-			tab: "Install plugin",
 			title: "Install by package name",
-			hint: "npm package name only, optionally with @version — for example @sjhmars/task-notify or @sjhmars/task-notify@0.2.0. Writes the {profile} profile (browser = web, desktop client = desktop; they do not share plugins). Installs and version updates hot-mount; refresh the page. Updating this installer itself needs a restart.",
+			hint: "Install npm plugins and components, optionally with @version. Uses the current {profile} profile. Restart the application after installation.",
 			placeholder: "@scope/package",
 			install: "Install",
 			installing: "Installing…",
-			success: "Installed and hot-mounted; refresh the page for its UI.",
-			failure: "Install failed"
+			restart: "Installed. Restart the application to apply it.",
+			dependencyRestart: "Component installed. Restart the application. Configured components then use the update; a new component also needs a plugin entry in the configuration file.",
+			bundleDisabled: "Installed; this plugin remains disabled. Enable it on the Plugins page, then restart the application.",
+			failure: "Installation did not complete"
 		};
 		//#endregion
 		//#region src/client/index.ts
 		const inject = ["slots", "locale"];
 		/**
-		* One same-origin GET to the plugin's exact Fetch routes (the seam allows
-		* GET/HEAD only; parameters ride the query string). The physical carrier
-		* (web route lane or the desktop IPC bridge) owns trust policy.
+		* Call the installer's same-origin GET routes with parameters in the query string.
+		* The Web route or Desktop IPC carrier owns admission and authentication.
 		* @param path - route path below /api.
 		* @param query - query parameters.
 		* @returns the parsed JSON response.
@@ -146,7 +162,7 @@ window.__ModuleLoader__.load({
 			return await response.json();
 		}
 		/**
-		* 注册安装标签页。
+		* 注册本包的安装页面。
 		* @param ctx - 浏览器插件上下文。
 		*/
 		function apply(ctx) {
@@ -158,11 +174,9 @@ window.__ModuleLoader__.load({
 				target: () => get("/api/pluginInstall/target"),
 				install: (packageName) => get("/api/pluginInstall/install", { package: packageName })
 			});
-			ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({
-				name: "settings.plugins.tab",
-				id: "install",
-				order: 20,
-				label: () => ctx.locale.bind(NS)("tab"),
+			ctx.slots.inject("plugins.bundle.config", () => ctx.slots.register({
+				name: "plugins.bundle.config",
+				key: "@sjhmars/plugin-install",
 				locale: NS,
 				inject: injected
 			}, PluginInstallTab));

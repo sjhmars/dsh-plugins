@@ -7,7 +7,8 @@
   "scripts": {
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
-    "pack": "pnpm -r run pack"
+    "pack": "pnpm -r --filter @sjhmars/* pack",
+    "test:compat": "node --import ./tests/register-harness.mjs --test tests/*.test.mjs"
   },
   "license": "MIT"
 }

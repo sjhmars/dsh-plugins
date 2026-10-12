@@ -26,11 +26,8 @@ const PLATFORM_MODULES = [
   '@deepseek-ai/dsh-client-schema-form',
 ] as const
 
-/** Documented temporary exemption: the runtime snapshot-store engine. */
-const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
-
 /** Externals resolved from the loader module table. */
-const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
+const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
 /** CSS-module virtual-id scheme, matching the repo build. */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
@@ -38,7 +35,7 @@ const CSS_VIRTUAL_SUFFIX = '.mjs'
 
 const libConfig: UserConfig = {
   name: PLUGIN_ID,
-  entry: ['lib/types/index.js', 'lib/types/invariant.js'],
+  entry: ['lib/types/index.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

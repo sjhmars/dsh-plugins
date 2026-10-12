@@ -1,6 +1,6 @@
 /** Happy HTTP helpers: auth, sessions, machines, attachments. */
 import { encodeBase64 } from "./bytes.js";
-import { encryptB64 } from "./encryption.js";
+import { decryptB64, encryptB64 } from "./encryption.js";
 import { HAPPY_CLIENT } from "./happy-version.js";
 /**
  * JSON POST/GET against the Happy API with the CLI client header.
@@ -69,6 +69,7 @@ export async function createOrLoadSession(input) {
     return {
         id,
         seq: numberOr(session.seq, 0),
+        metadata: typeof session.metadata === 'string' ? asRecord(decryptB64(input.crypto, session.metadata)) : asRecord(input.metadata),
         metadataVersion: numberOr(session.metadataVersion, 0),
         agentStateVersion: numberOr(session.agentStateVersion, 0),
     };
@@ -210,12 +211,7 @@ export async function downloadEncryptedAttachment(serverUrl, token, sessionId, r
  * @param sessionId - Happy session id.
  */
 export async function archiveHappySession(serverUrl, token, sessionId) {
-    try {
-        await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST', token });
-    }
-    catch {
-        // Archive endpoint missing or session already inactive.
-    }
+    await happyFetch(serverUrl, `/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST', token });
 }
 /**
  * Remove a Happy cloud session so the App can drop it from the list.

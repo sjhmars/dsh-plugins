@@ -7,11 +7,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-settings/types'
 import { buildThinkingOps } from './patch.ts'
 
-const PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
+const PI_AI_NAMESPACE = 'llm-pi-ai'
 
 /** Plugin configuration. */
 export interface Config {

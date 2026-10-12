@@ -1,11 +1,10 @@
-/** 浏览器半：设置 → 插件 的安装页。 */
+/** 浏览器半：Plugins 配置页 的安装页。 */
 import { PluginInstallTab } from "./PluginInstallTab.js";
 import { en, NS, zh } from "./locales.js";
 export const inject = ['slots', 'locale'];
 /**
- * One same-origin GET to the plugin's exact Fetch routes (the seam allows
- * GET/HEAD only; parameters ride the query string). The physical carrier
- * (web route lane or the desktop IPC bridge) owns trust policy.
+ * Call the installer's same-origin GET routes with parameters in the query string.
+ * The Web route or Desktop IPC carrier owns admission and authentication.
  * @param path - route path below /api.
  * @param query - query parameters.
  * @returns the parsed JSON response.
@@ -18,7 +17,7 @@ async function get(path, query = {}) {
     return await response.json();
 }
 /**
- * 注册安装标签页。
+ * 注册本包的安装页面。
  * @param ctx - 浏览器插件上下文。
  */
 export function apply(ctx) {
@@ -27,11 +26,9 @@ export function apply(ctx) {
         target: () => get('/api/pluginInstall/target'),
         install: (packageName) => get('/api/pluginInstall/install', { package: packageName }),
     });
-    ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-        name: 'settings.plugins.tab',
-        id: 'install',
-        order: 20,
-        label: () => ctx.locale.bind(NS)('tab'),
+    ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+        name: 'plugins.bundle.config',
+        key: '@sjhmars/plugin-install',
         locale: NS,
         inject: injected,
     }, PluginInstallTab));

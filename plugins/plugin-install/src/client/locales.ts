@@ -1,28 +1,28 @@
-/** 安装页文案。 */
+/** Localized installer copy. */
 export const NS = 'plugin-install'
-
-/** 简体中文。 */
+/** Simplified Chinese. */
 export const zh = {
-  tab: '安装插件',
   title: '用包名安装',
-  hint: '只填 npm 包名（可带 @版本），例如 @sjhmars/task-notify 或 @sjhmars/task-notify@0.2.0。写入 {profile} profile（网页版是 web，桌面客户端是 desktop；两边互不相通）。装完或换版本都会热挂载，刷新页面即可；更新本安装器自己需重启。',
+  hint: '支持 npm 插件和普通组件，可带 @版本。写入当前 {profile} profile，安装后重启应用。',
   placeholder: '@scope/package',
   install: '安装',
   installing: '正在安装…',
-  success: '安装成功，已热挂载；界面部分刷新页面即可。',
-  failure: '安装失败',
+  restart: '安装完成，请重启应用后生效。',
+  dependencyRestart: '组件已安装，请重启应用。已配置的组件更新后生效；首次安装还需在配置文件中启用。',
+  bundleDisabled: '安装完成，该插件仍处于停用状态。请在 Plugins 页启用后重启应用。',
+  failure: '安装未完成',
 } as const
-
-/** English copy. */
+/** English. */
 export const en: Record<keyof typeof zh, string> = {
-  tab: 'Install plugin',
   title: 'Install by package name',
-  hint: 'npm package name only, optionally with @version — for example @sjhmars/task-notify or @sjhmars/task-notify@0.2.0. Writes the {profile} profile (browser = web, desktop client = desktop; they do not share plugins). Installs and version updates hot-mount; refresh the page. Updating this installer itself needs a restart.',
+  hint: 'Install npm plugins and components, optionally with @version. Uses the current {profile} profile. Restart the application after installation.',
   placeholder: '@scope/package',
   install: 'Install',
   installing: 'Installing…',
-  success: 'Installed and hot-mounted; refresh the page for its UI.',
-  failure: 'Install failed',
+  restart: 'Installed. Restart the application to apply it.',
+  dependencyRestart: 'Component installed. Restart the application. Configured components then use the update; a new component also needs a plugin entry in the configuration file.',
+  bundleDisabled: 'Installed; this plugin remains disabled. Enable it on the Plugins page, then restart the application.',
+  failure: 'Installation did not complete',
 }
-
+/** Dictionary keys. */
 export type PluginInstallKey = keyof typeof zh

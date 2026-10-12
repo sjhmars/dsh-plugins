@@ -1,5 +1,5 @@
-/** Browser half: Happy remote card on Settings → Plugins. */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+/** Browser half: Happy remote configuration on its Plugins bundle page. */
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import { type HappyBridgeKey } from './locales.ts';
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
@@ -9,7 +9,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Required client services. */
 export declare const inject: string[];
 /**
- * Register the Happy remote card under the `happy-bridge` settings namespace.
+ * Register the Happy remote page using its Loader entry configuration.
  * @param ctx - browser plugin context.
  */
 export declare function apply(ctx: ClientContext): void;
